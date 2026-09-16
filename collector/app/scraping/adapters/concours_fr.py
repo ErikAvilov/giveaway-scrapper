@@ -23,20 +23,28 @@ class ConcoursFrAdapter:
     def enrich(self, response: Any, *, page_url: str) -> PageEnrichment:
         path = urlparse(page_url).path or "/"
         is_home = path in {"", "/"}
-        is_post = path not in {"", "/"} and not _WP_ASSET.search(path) and path.count("/") >= 1
+        is_category = "/categorie-" in path or path.rstrip("/").endswith("/category")
+        is_listing = is_home or is_category
+        is_post = (
+            not is_listing
+            and path not in {"", "/"}
+            and not _WP_ASSET.search(path)
+            and path.count("/") >= 1
+        )
 
         follow: list[str] = []
-        for href in css_attr(response, "a.tpg-post-link::attr(href), .entry-title a::attr(href)"):
+        for href in css_attr(response, "a.tpg-post-link::attr(href), .entry-title a::attr(href), article a::attr(href)"):
             abs_url = absolute_url(page_url, href)
             if (
                 abs_url
                 and same_registrable_host(abs_url, "concours.fr")
                 and not _WP_ASSET.search(urlparse(abs_url).path or "")
+                and "/categorie-" not in (urlparse(abs_url).path or "")
             ):
                 follow.append(abs_url)
         follow = _dedupe(follow)
 
-        if is_home:
+        if is_listing or not is_post:
             return PageEnrichment(skip_as_candidate=True, follow_urls=follow or None)
 
         title = first_css_text(response, ("h1.entry-title", ".entry-title", "h1", "title"))

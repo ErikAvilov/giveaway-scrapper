@@ -46,6 +46,27 @@ export function formatDuration(startedAt: Date | string, finishedAt: Date | stri
   return `${h}h ${m % 60}m`;
 }
 
+export function formatRelativeHours(
+  value: Date | string | null | undefined,
+): string {
+  if (!value) return "—";
+  const d = typeof value === "string" ? new Date(value) : value;
+  if (Number.isNaN(d.getTime())) return "—";
+  const diffMs = d.getTime() - Date.now();
+  const absH = Math.round(Math.abs(diffMs) / (60 * 60 * 1000));
+  if (Math.abs(diffMs) < 45 * 60 * 1000) {
+    return diffMs <= 0 ? "maintenant" : "dans moins d’1 h";
+  }
+  if (diffMs <= 0) {
+    if (absH < 24) return `il y a ${absH} h`;
+    const days = Math.round(absH / 24);
+    return `il y a ${days} j`;
+  }
+  if (absH < 24) return `dans ${absH} h`;
+  const days = Math.round(absH / 24);
+  return `dans ${days} j`;
+}
+
 export function hostnameFromUrl(url: string | null | undefined): string {
   if (!url) return "—";
   try {

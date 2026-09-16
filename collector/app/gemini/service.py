@@ -15,6 +15,13 @@ from psycopg import Connection
 
 from app.config import Settings
 from app.db.repository import GiveawayRepository
+from app.extraction.entry_acceptability import (
+    REJECTION_REASON as ENTRY_SOCIAL_REJECTION,
+)
+from app.extraction.entry_acceptability import (
+    assess_entry_acceptability,
+    merge_entry_acceptability,
+)
 from app.extraction.france_eligibility import (
     FranceEligibility,
     classify_france_eligibility,
@@ -38,6 +45,7 @@ class SkipReason(StrEnum):
     CLEARLY_EXPIRED = "clearly_expired"
     UNDESIRABLE = "undesirable"
     FRANCE_INELIGIBLE = "france_ineligible"
+    PUBLIC_SOCIAL = "public_social"
     MISSING_CONTENT = "missing_content"
 
 
@@ -108,6 +116,12 @@ def decide_status(
     if analysis.wanted_prize is False:
         return GiveawayStatus.REJECTED
 
+    if (
+        analysis.entry_acceptable is False
+        or analysis.requires_public_social_action is True
+    ):
+        return GiveawayStatus.REJECTED
+
     if analysis.end_date is not None:
         end = analysis.end_date
         if end.tzinfo is None:
@@ -120,6 +134,10 @@ def decide_status(
 
     # Never activate without positive France evidence.
     if france != FranceEligibility.ELIGIBLE:
+        return GiveawayStatus.UNCERTAIN
+
+    # Unknown entry acceptability stays pending until resolved.
+    if analysis.entry_acceptable is None:
         return GiveawayStatus.UNCERTAIN
 
     return GiveawayStatus.ACTIVE
@@ -150,6 +168,21 @@ def should_skip_analysis(
     )
     if local_fr.france_eligibility == FranceEligibility.INELIGIBLE:
         return SkipReason.FRANCE_INELIGIBLE
+
+    requirements: list[str] = []
+    if isinstance(giveaway.analysis_json, dict):
+        raw_req = giveaway.analysis_json.get("requirements")
+        if isinstance(raw_req, list):
+            requirements = [str(r) for r in raw_req if r]
+    local_entry = assess_entry_acceptability(
+        title=giveaway.title,
+        prize=giveaway.prize,
+        body=giveaway.raw_excerpt,
+        entry_method=giveaway.entry_method,
+        requirements=requirements,
+    )
+    if local_entry.entry_acceptable is False:
+        return SkipReason.PUBLIC_SOCIAL
     return None
 
 
@@ -169,6 +202,34 @@ def apply_analysis(
     assert giveaway.id is not None
     france = resolve_france_eligibility(analysis)
     eligible_france = sync_eligible_france_column(france)
+
+    requirements = list(analysis.requirements or [])
+    local_entry = assess_entry_acceptability(
+        title=analysis.title or giveaway.title,
+        prize=analysis.prize or giveaway.prize,
+        body=analysis.summary or giveaway.raw_excerpt,
+        entry_method=(
+            analysis.entry_method.value
+            if analysis.entry_method is not None
+            else giveaway.entry_method
+        ),
+        requirements=requirements,
+    )
+    entry = merge_entry_acceptability(
+        local_entry,
+        gemini_requires_public=analysis.requires_public_social_action,
+        gemini_acceptable=analysis.entry_acceptable,
+        gemini_reason=analysis.entry_rejection_reason,
+    )
+    # Mirror merged gate onto analysis used for status decision.
+    analysis = analysis.model_copy(
+        update={
+            "requires_public_social_action": entry.requires_public_social_action,
+            "entry_acceptable": entry.entry_acceptable,
+            "entry_rejection_reason": entry.entry_rejection_reason,
+        }
+    )
+
     status = decide_status(
         analysis,
         entry_url_status=giveaway.entry_url_status,
@@ -202,6 +263,9 @@ def apply_analysis(
         requires_purchase=analysis.requires_purchase,
         requires_social=analysis.requires_social,
         entry_method=analysis.entry_method.value,
+        requires_public_social_action=entry.requires_public_social_action,
+        entry_acceptable=entry.entry_acceptable,
+        entry_rejection_reason=entry.entry_rejection_reason,
         start_at=analysis.start_date,
         end_at=analysis.end_date,
         terms_url=analysis.terms_url,
@@ -287,6 +351,43 @@ def mark_france_ineligible_without_gemini(
         eligible_france=False,
         france_eligibility=local.france_eligibility.value,
         eligibility_reason=local.reason,
+    )
+
+
+def mark_public_social_without_gemini(
+    repo: GiveawayRepository,
+    giveaway: Giveaway,
+) -> Giveaway:
+    assert giveaway.id is not None
+    requirements: list[str] = []
+    if isinstance(giveaway.analysis_json, dict):
+        raw_req = giveaway.analysis_json.get("requirements")
+        if isinstance(raw_req, list):
+            requirements = [str(r) for r in raw_req if r]
+    local = assess_entry_acceptability(
+        title=giveaway.title,
+        prize=giveaway.prize,
+        body=giveaway.raw_excerpt,
+        entry_method=giveaway.entry_method,
+        requirements=requirements,
+    )
+    payload = {
+        "is_giveaway": True,
+        "rejection_reason": local.entry_rejection_reason or ENTRY_SOCIAL_REJECTION,
+        "requires_public_social_action": True,
+        "entry_acceptable": False,
+        "entry_rejection_reason": local.entry_rejection_reason or ENTRY_SOCIAL_REJECTION,
+        "confidence": 0.0,
+        "_meta": {"model": None, "local_skip": "public_social"},
+    }
+    return repo.apply_local_skip(
+        giveaway.id,
+        analysis_json=payload,
+        status=GiveawayStatus.REJECTED,
+        confidence=0.0,
+        requires_public_social_action=True,
+        entry_acceptable=False,
+        entry_rejection_reason=local.entry_rejection_reason or ENTRY_SOCIAL_REJECTION,
     )
 
 
@@ -514,6 +615,12 @@ def analyze_giveaways(
                     conn.commit()
                 elif skip == SkipReason.FRANCE_INELIGIBLE:
                     updated = mark_france_ineligible_without_gemini(repo, giveaway)
+                    item.status = updated.status
+                    item.is_giveaway = True
+                    result.rejected += 1
+                    conn.commit()
+                elif skip == SkipReason.PUBLIC_SOCIAL:
+                    updated = mark_public_social_without_gemini(repo, giveaway)
                     item.status = updated.status
                     item.is_giveaway = True
                     result.rejected += 1

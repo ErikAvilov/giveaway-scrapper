@@ -90,6 +90,8 @@ def test_france_ps5_404_rejects_via_decide_status() -> None:
         france_eligibility=FranceEligibility.ELIGIBLE,
         eligible_france=True,
         entry_method=EntryMethod.WEB_FORM,
+        entry_acceptable=True,
+        requires_public_social_action=False,
     )
     assert decide_status(analysis) == GiveawayStatus.ACTIVE
     assert decide_status(analysis, entry_url_status="gone") == GiveawayStatus.REJECTED

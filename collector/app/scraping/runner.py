@@ -101,6 +101,9 @@ def crawl_source(
             concurrent_per_domain = overrides.concurrent_requests_per_domain
 
         adapter_key = (source.crawl_config or {}).get("adapter")
+        extra_starts = (source.crawl_config or {}).get("extra_start_urls") or []
+        if not isinstance(extra_starts, list):
+            extra_starts = []
         spider = build_spider(
             source_id=source.id,
             start_url=base,
@@ -114,6 +117,7 @@ def crawl_source(
             limits=limits,
             adapter_key=str(adapter_key) if adapter_key else None,
             source_name=source.name,
+            extra_start_urls=[str(u) for u in extra_starts],
         )
         candidates, stats = run_spider(spider)
         pages = int(stats.get("pages_fetched_local") or stats.get("requests_count") or 0)
@@ -156,6 +160,9 @@ def crawl_source(
                     preference_reason=item.get("preference_reason"),
                     requires_travel=item.get("requires_travel"),
                     requires_additional_spend=item.get("requires_additional_spend"),
+                    requires_public_social_action=item.get("requires_public_social_action"),
+                    entry_acceptable=item.get("entry_acceptable"),
+                    entry_rejection_reason=item.get("entry_rejection_reason"),
                     platform=item.get("platform"),
                     platform_campaign_id=item.get("platform_campaign_id"),
                     status=status_raw or "candidate",

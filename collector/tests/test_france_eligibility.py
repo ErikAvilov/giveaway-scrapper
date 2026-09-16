@@ -68,6 +68,8 @@ def test_decide_status_france_gates() -> None:
         "confidence": 0.9,
         "wanted_prize": True,
         "entry_method": EntryMethod.WEB_FORM,
+        "entry_acceptable": True,
+        "requires_public_social_action": False,
     }
     assert (
         decide_status(

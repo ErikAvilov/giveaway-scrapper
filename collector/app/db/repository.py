@@ -98,6 +98,11 @@ def _row_to_giveaway(row: dict[str, Any]) -> Giveaway:
         link_hints=_as_str_list(row.get("link_hints")),
         analysis_json=analysis,
         manual_status=ManualStatus(row["manual_status"]),
+        remind_at=row.get("remind_at"),
+        reminder_hours=row.get("reminder_hours"),
+        requires_public_social_action=row.get("requires_public_social_action"),
+        entry_acceptable=row.get("entry_acceptable"),
+        entry_rejection_reason=row.get("entry_rejection_reason"),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -368,6 +373,23 @@ class GiveawayRepository:
         ).fetchone()
         return _row_to_giveaway(row) if row else None
 
+    def get_by_platform_campaign(
+        self,
+        platform: str,
+        platform_campaign_id: str,
+    ) -> Giveaway | None:
+        """Cross-aggregator identity lookup (Gleam / SweepWidget keys)."""
+        row = self._conn.execute(
+            """
+            SELECT * FROM giveaways
+            WHERE platform = %s AND platform_campaign_id = %s
+            ORDER BY last_seen_at DESC NULLS LAST
+            LIMIT 1
+            """,
+            (platform, platform_campaign_id),
+        ).fetchone()
+        return _row_to_giveaway(row) if row else None
+
     def list_needing_analysis(self, *, limit: int = 100) -> list[Giveaway]:
         """Giveaways that have never been analyzed or whose content changed."""
         return self.list_for_analysis(limit=limit, include_analyzed=False)
@@ -478,6 +500,9 @@ class GiveawayRepository:
         geo_restriction: str | None = None,
         platform: str | None = None,
         platform_campaign_id: str | None = None,
+        requires_public_social_action: bool | None = None,
+        entry_acceptable: bool | None = None,
+        entry_rejection_reason: str | None = None,
         start_at: datetime | None = None,
         end_at: datetime | None = None,
         terms_url: str | None = None,
@@ -500,6 +525,13 @@ class GiveawayRepository:
         hash_value = content_hash or compute_content_hash(title, description, raw_excerpt)
         at = seen_at or _utcnow()
         existing = self.get_by_canonical_url(canonical)
+        # Soft cross-aggregator dedup: reuse row when platform campaign already known.
+        if existing is None and platform and platform_campaign_id:
+            by_platform = self.get_by_platform_campaign(platform, platform_campaign_id)
+            if by_platform is not None:
+                existing = by_platform
+                canonical = str(by_platform.canonical_url)
+                domain = domain_from_url(canonical)
         created = existing is None
         hash_changed = created or existing.content_hash != hash_value
 
@@ -531,6 +563,9 @@ class GiveawayRepository:
                 geo_restriction,
                 platform,
                 platform_campaign_id,
+                requires_public_social_action,
+                entry_acceptable,
+                entry_rejection_reason,
                 start_at,
                 end_at,
                 terms_url,
@@ -546,7 +581,7 @@ class GiveawayRepository:
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                %s, %s, %s, %s, %s
+                %s, %s, %s, %s, %s, %s, %s, %s
             )
             ON CONFLICT (canonical_url) DO UPDATE SET
                 original_url = EXCLUDED.original_url,
@@ -640,6 +675,20 @@ class GiveawayRepository:
                     THEN COALESCE(EXCLUDED.platform_campaign_id, giveaways.platform_campaign_id)
                     ELSE COALESCE(giveaways.platform_campaign_id, EXCLUDED.platform_campaign_id)
                 END,
+                requires_public_social_action = CASE
+                    WHEN giveaways.content_hash IS DISTINCT FROM EXCLUDED.content_hash
+                    THEN EXCLUDED.requires_public_social_action
+                    ELSE giveaways.requires_public_social_action
+                END,
+                entry_acceptable = CASE
+                    WHEN giveaways.content_hash IS DISTINCT FROM EXCLUDED.content_hash
+                    THEN EXCLUDED.entry_acceptable ELSE giveaways.entry_acceptable
+                END,
+                entry_rejection_reason = CASE
+                    WHEN giveaways.content_hash IS DISTINCT FROM EXCLUDED.content_hash
+                    THEN EXCLUDED.entry_rejection_reason
+                    ELSE giveaways.entry_rejection_reason
+                END,
                 start_at = CASE
                     WHEN giveaways.content_hash IS DISTINCT FROM EXCLUDED.content_hash
                     THEN EXCLUDED.start_at ELSE giveaways.start_at
@@ -709,6 +758,9 @@ class GiveawayRepository:
                 geo_restriction,
                 platform,
                 platform_campaign_id,
+                requires_public_social_action,
+                entry_acceptable,
+                entry_rejection_reason,
                 start_at,
                 end_at,
                 terms_url,
@@ -761,6 +813,9 @@ class GiveawayRepository:
         requires_purchase: bool | None = None,
         requires_social: bool | None = None,
         entry_method: str | None = None,
+        requires_public_social_action: bool | None = None,
+        entry_acceptable: bool | None = None,
+        entry_rejection_reason: str | None = None,
         start_at: datetime | None = None,
         end_at: datetime | None = None,
         terms_url: str | None = None,
@@ -800,6 +855,9 @@ class GiveawayRepository:
                 requires_purchase = COALESCE(%s, requires_purchase),
                 requires_social = COALESCE(%s, requires_social),
                 entry_method = COALESCE(%s, entry_method),
+                requires_public_social_action = COALESCE(%s, requires_public_social_action),
+                entry_acceptable = COALESCE(%s, entry_acceptable),
+                entry_rejection_reason = COALESCE(%s, entry_rejection_reason),
                 start_at = COALESCE(%s, start_at),
                 end_at = COALESCE(%s, end_at),
                 terms_url = COALESCE(%s, terms_url),
@@ -832,6 +890,9 @@ class GiveawayRepository:
                 requires_purchase,
                 requires_social,
                 entry_method,
+                requires_public_social_action,
+                entry_acceptable,
+                entry_rejection_reason,
                 start_at,
                 end_at,
                 terms_url,
@@ -922,6 +983,9 @@ class GiveawayRepository:
         eligible_france: bool | None = None,
         france_eligibility: str | None = None,
         eligibility_reason: str | None = None,
+        requires_public_social_action: bool | None = None,
+        entry_acceptable: bool | None = None,
+        entry_rejection_reason: str | None = None,
     ) -> Giveaway:
         """
         Record a local pre-Gemini skip (heuristic / clear expiry / FR ineligible).
@@ -939,6 +1003,9 @@ class GiveawayRepository:
                 eligible_france = COALESCE(%s, eligible_france),
                 france_eligibility = COALESCE(%s, france_eligibility),
                 eligibility_reason = COALESCE(%s, eligibility_reason),
+                requires_public_social_action = COALESCE(%s, requires_public_social_action),
+                entry_acceptable = COALESCE(%s, entry_acceptable),
+                entry_rejection_reason = COALESCE(%s, entry_rejection_reason),
                 updated_at = now()
             WHERE id = %s
             RETURNING *
@@ -950,12 +1017,67 @@ class GiveawayRepository:
                 eligible_france,
                 france_eligibility,
                 eligibility_reason,
+                requires_public_social_action,
+                entry_acceptable,
+                entry_rejection_reason,
                 giveaway_id,
             ),
         ).fetchone()
         if row is None:
             raise LookupError(f"giveaway not found: {giveaway_id}")
         return _row_to_giveaway(row)
+
+    def save_entry_acceptability(
+        self,
+        giveaway_id: UUID,
+        *,
+        requires_public_social_action: bool | None,
+        entry_acceptable: bool | None,
+        entry_rejection_reason: str | None,
+        status: GiveawayStatus | str | None = None,
+    ) -> Giveaway:
+        """Persist local / backfill entry-acceptability fields (no analyzed_at)."""
+        row = self._conn.execute(
+            """
+            UPDATE giveaways SET
+                requires_public_social_action = %s,
+                entry_acceptable = %s,
+                entry_rejection_reason = %s,
+                status = COALESCE(%s, status),
+                updated_at = now()
+            WHERE id = %s
+            RETURNING *
+            """,
+            (
+                requires_public_social_action,
+                entry_acceptable,
+                entry_rejection_reason,
+                str(status) if status is not None else None,
+                giveaway_id,
+            ),
+        ).fetchone()
+        if row is None:
+            raise LookupError(f"giveaway not found: {giveaway_id}")
+        return _row_to_giveaway(row)
+
+    def list_for_entry_acceptability_backfill(
+        self,
+        *,
+        limit: int = 500,
+        force: bool = False,
+    ) -> list[Giveaway]:
+        """Rows needing (or forced) entry-acceptability re-evaluation from stored text."""
+        clause = "TRUE" if force else "entry_acceptable IS NULL"
+        rows = self._conn.execute(
+            f"""
+            SELECT * FROM giveaways
+            WHERE {clause}
+            ORDER BY discovered_at DESC
+            LIMIT %s
+            """,
+            (limit,),
+        ).fetchall()
+        return [_row_to_giveaway(r) for r in rows]
 
     def delete_by_canonical_url(self, canonical_url: str) -> bool:
         """Delete a giveaway (used by tests / admin cleanup)."""

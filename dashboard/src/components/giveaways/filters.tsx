@@ -33,6 +33,7 @@ export function GiveawayFiltersBar({
   const wantedChecked = values.wanted !== "0";
   const franceChecked = values.france !== "0";
   const hideGoneChecked = values.hide_gone !== "0";
+  const acceptableChecked = values.acceptable !== "0";
 
   return (
     <form className="grid grid-cols-2 gap-3 border-b border-zinc-200 p-4 md:grid-cols-4 xl:grid-cols-6 dark:border-zinc-800">
@@ -99,6 +100,7 @@ export function GiveawayFiltersBar({
           <option value="priority">Wanted / priority</option>
           <option value="newest">Newest</option>
           <option value="ending_soon">Ending soon</option>
+          <option value="remind_at">Reminders first</option>
           <option value="highest_value">Highest prize value</option>
           <option value="highest_confidence">Highest confidence</option>
         </Select>
@@ -147,6 +149,17 @@ export function GiveawayFiltersBar({
         />
         Hide dead links
       </label>
+      <label className="flex items-center gap-2.5 py-2 text-sm font-medium">
+        <input type="hidden" name="acceptable" value="0" />
+        <input
+          type="checkbox"
+          name="acceptable"
+          value="1"
+          defaultChecked={acceptableChecked}
+          className="h-4 w-4 rounded border-zinc-400"
+        />
+        Acceptable entry only
+      </label>
       <label className="flex items-center gap-2.5 py-2 text-sm">
         <input
           type="checkbox"
@@ -166,6 +179,26 @@ export function GiveawayFiltersBar({
           className="h-4 w-4 rounded border-zinc-400"
         />
         Ending soon
+      </label>
+      <label className="flex items-center gap-2.5 py-2 text-sm font-medium">
+        <input
+          type="checkbox"
+          name="reminders_due"
+          value="1"
+          defaultChecked={values.reminders_due === "1"}
+          className="h-4 w-4 rounded border-zinc-400"
+        />
+        Rappels dus
+      </label>
+      <label className="flex items-center gap-2.5 py-2 text-sm">
+        <input
+          type="checkbox"
+          name="has_reminder"
+          value="1"
+          defaultChecked={values.has_reminder === "1"}
+          className="h-4 w-4 rounded border-zinc-400"
+        />
+        Avec rappel
       </label>
       <label className="flex items-center gap-2.5 py-2 text-sm text-zinc-500">
         <input
@@ -196,6 +229,24 @@ export function GiveawayFiltersBar({
           className="h-4 w-4 rounded border-zinc-400"
         />
         Inspect: unwanted prizes
+      </label>
+      <label className="flex items-center gap-2.5 py-2 text-sm text-zinc-500">
+        <input
+          type="checkbox"
+          name="public_social"
+          value="1"
+          defaultChecked={values.public_social === "1"}
+          className="h-4 w-4 rounded border-zinc-400"
+        />
+        Inspect: public social action
+      </label>
+      <label className="block space-y-1.5">
+        <span className="text-xs uppercase text-zinc-500">Entry rejection reason</span>
+        <Input
+          name="entry_rejection_reason"
+          defaultValue={values.entry_rejection_reason ?? ""}
+          placeholder="requires public social…"
+        />
       </label>
       <div className="flex items-end gap-3">
         <Button type="submit" size="md">

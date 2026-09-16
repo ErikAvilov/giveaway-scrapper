@@ -59,6 +59,8 @@ def test_decide_status_expired_by_end_date() -> None:
         france_eligibility=FranceEligibility.ELIGIBLE,
         eligible_france=True,
         wanted_prize=True,
+        entry_acceptable=True,
+        requires_public_social_action=False,
     )
     assert decide_status(analysis) == GiveawayStatus.EXPIRED
 
@@ -73,6 +75,7 @@ def test_decide_status_uncertain_low_confidence() -> None:
         france_eligibility=FranceEligibility.ELIGIBLE,
         eligible_france=True,
         wanted_prize=True,
+        entry_acceptable=True,
     )
     assert decide_status(analysis) == GiveawayStatus.UNCERTAIN
 
@@ -88,6 +91,8 @@ def test_decide_status_active() -> None:
         france_eligibility=FranceEligibility.ELIGIBLE,
         eligible_france=True,
         wanted_prize=True,
+        entry_acceptable=True,
+        requires_public_social_action=False,
     )
     assert decide_status(analysis) == GiveawayStatus.ACTIVE
 

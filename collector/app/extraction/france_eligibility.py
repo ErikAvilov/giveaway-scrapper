@@ -40,6 +40,7 @@ _FRANCE_EXCLUDED = re.compile(
     re.IGNORECASE,
 )
 _FRANCE_POSITIVE = re.compile(
+    r"\bouvert\s+[àa]\s+toute\s+personne\s+r[eé]sidant\s+en\s+france\b|"
     r"\bfrance\s+m[eé]tropolitaine\b|"
     r"\bfrance\s+only\b|"
     r"\bopen\s+to\s+(?:france|french\s+residents)\b|"
@@ -79,7 +80,11 @@ _US_ONLY = re.compile(
     r"\blegal\s+residents?\s+of\s+the\s+(?:fifty\s+)?(?:50\s+)?united\s+states\b|"
     r"\bonly\s+(?:open\s+to\s+)?(?:us|u\.s\.|usa|united\s+states)\b|"
     r"\bopen\s+to\s+(?:legal\s+)?residents?\s+of\s+the\s+united\s+states\b|"
-    r"\bavailable\s+in\s+united\s+states\b",
+    r"\bavailable\s+in\s+united\s+states\b|"
+    r"\beligible\s*🇺🇸?\s*us\b|"
+    r"\beligible[:\s]+(?:🇺🇸\s*)?(?:us|usa|united\s+states)\b|"
+    r"^🇺🇸\s*us$|"
+    r"^us$",
     re.IGNORECASE,
 )
 _CANADA_ONLY = re.compile(

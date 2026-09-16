@@ -165,7 +165,11 @@ def crawl(
     real_test: bool,
 ) -> None:
     """Crawl configured sources and save giveaway candidates (no Gemini)."""
-    from app.scraping.diagnostics import build_candidate_diagnostics, count_would_analyze
+    from app.scraping.diagnostics import (
+        build_candidate_diagnostics,
+        count_would_analyze,
+        summarize_source_candidates,
+    )
 
     settings = get_settings()
     parsed_id = _parse_uuid(source_id, "source")
@@ -212,6 +216,20 @@ def crawl(
         click.echo(f"Pages fetched: {result.pages_fetched}")
         click.echo(f"Candidates: {result.candidates_found}")
         if show_diagnostics:
+            summary = summarize_source_candidates(
+                source_name=result.source_name,
+                pages_fetched=result.pages_fetched,
+                candidates=result.candidates,
+                threshold=threshold,
+            )
+            click.echo(f"Worldwide/France: {summary.france_eligible}")
+            click.echo(f"France ineligible: {summary.france_ineligible}")
+            click.echo(f"France unknown: {summary.france_unknown}")
+            click.echo(f"Wanted prizes: {summary.wanted}")
+            click.echo(f"Unwanted: {summary.unwanted}")
+            click.echo(f"Dead: {summary.dead_urls}")
+            click.echo(f"Duplicates: {summary.duplicates}")
+            click.echo(f"Would keep: {summary.would_keep}")
             click.echo(f"Would analyze: {would}")
         else:
             click.echo(
@@ -519,6 +537,53 @@ def validate_links_cmd(limit: int, all_pending: bool) -> None:
         f"unknown={result.unknown}\n"
         f"rejected={result.rejected}\n"
         f"errors={result.errors}"
+    )
+
+
+@main.command("reprioritize-entry")
+@click.option(
+    "--limit",
+    default=500,
+    show_default=True,
+    type=int,
+    help="Max rows to re-evaluate per run.",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help="Re-evaluate even when entry_acceptable is already set.",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Compute classifications without writing.",
+)
+def reprioritize_entry_cmd(limit: int, force: bool, dry_run: bool) -> None:
+    """Backfill public-social entry gate from stored text (no re-crawl)."""
+    from app.extraction.entry_acceptability_backfill import backfill_entry_acceptability
+
+    settings = get_settings()
+    with connection(settings) as conn:
+        apply_migrations(conn)
+        summary = backfill_entry_acceptability(
+            conn,
+            limit=limit,
+            force=force,
+            dry_run=dry_run,
+        )
+        if not dry_run:
+            conn.commit()
+    click.echo(
+        "Reprioritize entry acceptability\n"
+        f"scanned={summary.scanned}\n"
+        f"updated={summary.updated}\n"
+        f"rejected={summary.rejected}\n"
+        f"acceptable={summary.acceptable}\n"
+        f"unknown={summary.unknown}\n"
+        f"unchanged={summary.unchanged}\n"
+        f"dry_run={dry_run}"
     )
 
 

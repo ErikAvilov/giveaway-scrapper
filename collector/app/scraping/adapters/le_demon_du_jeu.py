@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 from app.scraping.adapters.base import (
     PageEnrichment,
     absolute_url,
+    body_text,
     css_attr,
     first_css_text,
 )
@@ -18,6 +19,12 @@ _LISTING_HINTS = (
     "nouveaux-jeux-concours",
     "selection-concours",
     "jeux-concours-cloture",
+    "concours-gagner-high-tech",
+    "concours-gagner-",
+)
+_FRANCE_RESIDENT = re.compile(
+    r"ouvert\s+[àa]\s+toute\s+personne\s+r[eé]sidant\s+en\s+france",
+    re.IGNORECASE,
 )
 
 
@@ -61,11 +68,19 @@ class LeDemonDuJeuAdapter:
                 entry_url = absolute_url(page_url, href)
                 break
 
+        body = body_text(response)
+        restriction = None
+        if _FRANCE_RESIDENT.search(body or ""):
+            restriction = "Le concours est ouvert à toute personne résidant en France"
+
         return PageEnrichment(
             title=title,
             entry_url=entry_url,
+            restriction_text=restriction,
+            excerpt=body[:3000] if body else None,
             skip_as_candidate=False,
             follow_urls=None,
+            meta={"france_resident_phrase": bool(restriction)},
         )
 
 

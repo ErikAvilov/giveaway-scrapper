@@ -5,9 +5,22 @@ import { useTransition } from "react";
 import { ExternalLink, X } from "lucide-react";
 import { GiveawayBadges } from "@/components/giveaways/badges";
 import { Button } from "@/components/ui/button";
-import { updateGiveawayManualStatusAction } from "@/server/actions";
+import {
+  clearGiveawayReminderAction,
+  setGiveawayReminderAction,
+  updateGiveawayManualStatusAction,
+} from "@/server/actions";
 import type { GiveawayRow, ManualStatus } from "@/lib/types";
-import { formatDate, formatEur } from "@/lib/utils";
+import { formatDate, formatEur, formatRelativeHours } from "@/lib/utils";
+
+const REMINDER_PRESETS = [
+  { hours: 6, label: "6 h" },
+  { hours: 12, label: "12 h" },
+  { hours: 24, label: "24 h" },
+  { hours: 48, label: "48 h" },
+  { hours: 72, label: "3 j" },
+  { hours: 168, label: "7 j" },
+] as const;
 
 export function GiveawayDetailPanel({
   giveaway,
@@ -35,6 +48,20 @@ export function GiveawayDetailPanel({
     });
   }
 
+  function setReminder(hours: number) {
+    startTransition(async () => {
+      await setGiveawayReminderAction(giveaway.id, hours);
+      router.refresh();
+    });
+  }
+
+  function clearReminder() {
+    startTransition(async () => {
+      await clearGiveawayReminderAction(giveaway.id);
+      router.refresh();
+    });
+  }
+
   function close() {
     if (viewingIgnored) {
       router.push("/giveaways?manual_status=ignored&wanted=0");
@@ -45,6 +72,8 @@ export function GiveawayDetailPanel({
       router.push(qs ? `/giveaways?${qs}` : "/giveaways");
     }
   }
+
+  const reminderDue = giveaway.reminder_due;
 
   return (
     <aside className="flex h-full w-full max-w-lg flex-col border-l border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
@@ -98,6 +127,24 @@ export function GiveawayDetailPanel({
           </dd>
           <dt className="text-zinc-500">Preference</dt>
           <dd className="break-words">{giveaway.preference_reason || "—"}</dd>
+          <dt className="text-zinc-500">Entry OK</dt>
+          <dd>
+            {giveaway.entry_acceptable == null
+              ? "unknown"
+              : giveaway.entry_acceptable
+                ? "yes"
+                : "no"}
+          </dd>
+          <dt className="text-zinc-500">Public social</dt>
+          <dd>
+            {giveaway.requires_public_social_action == null
+              ? "—"
+              : giveaway.requires_public_social_action
+                ? "required"
+                : "no"}
+          </dd>
+          <dt className="text-zinc-500">Entry reject</dt>
+          <dd className="break-words">{giveaway.entry_rejection_reason || "—"}</dd>
           <dt className="text-zinc-500">Method</dt>
           <dd>{giveaway.entry_method || "—"}</dd>
           <dt className="text-zinc-500">Source</dt>
@@ -107,6 +154,14 @@ export function GiveawayDetailPanel({
           <dt className="text-zinc-500">Status</dt>
           <dd>
             {giveaway.status} / {giveaway.manual_status}
+          </dd>
+          <dt className="text-zinc-500">Rappel</dt>
+          <dd>
+            {giveaway.remind_at
+              ? `${formatDate(giveaway.remind_at)} (${formatRelativeHours(giveaway.remind_at)}${
+                  giveaway.reminder_hours ? ` · ${giveaway.reminder_hours} h` : ""
+                })`
+              : "—"}
           </dd>
           <dt className="text-zinc-500">Start</dt>
           <dd>{formatDate(giveaway.start_at)}</dd>
@@ -171,6 +226,41 @@ export function GiveawayDetailPanel({
             </Button>
           ))}
         </div>
+
+        <Section title="Rappel / reconsultation">
+          <p className="mb-2 text-zinc-500">
+            {reminderDue
+              ? "Ce giveaway doit être reconsulté maintenant."
+              : "Planifie un rappel après X heures (ex. entrée quotidienne)."}
+          </p>
+          <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+            {REMINDER_PRESETS.map((preset) => (
+              <Button
+                key={preset.hours}
+                size="md"
+                className="min-h-10"
+                variant={
+                  giveaway.reminder_hours === preset.hours && !reminderDue
+                    ? "default"
+                    : "outline"
+                }
+                disabled={pending}
+                onClick={() => setReminder(preset.hours)}
+              >
+                {preset.label}
+              </Button>
+            ))}
+            <Button
+              size="md"
+              className="min-h-10"
+              variant="ghost"
+              disabled={pending || !giveaway.remind_at}
+              onClick={clearReminder}
+            >
+              Clear
+            </Button>
+          </div>
+        </Section>
 
         <Section title="Description">
           <p className="whitespace-pre-wrap text-zinc-700 dark:text-zinc-300">

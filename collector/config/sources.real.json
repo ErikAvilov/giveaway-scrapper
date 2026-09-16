@@ -1,6 +1,146 @@
 {
   "sources": [
     {
+      "name": "GleamGiveaways",
+      "base_url": "https://gleamgiveaways.com/",
+      "source_type": "giveaway_aggregator",
+      "enabled": true,
+      "crawl_interval_minutes": 180,
+      "crawl_config": {
+        "profile": "real",
+        "region": "international",
+        "target_regions": ["worldwide", "france", "eu"],
+        "adapter": "gleam_giveaways",
+        "max_pages": 12,
+        "max_depth": 1,
+        "notes": "Prefer Worldwide + Electronics/Gaming/Home/Cash/Gift Cards at listing"
+      }
+    },
+    {
+      "name": "GiveawayBase",
+      "base_url": "https://giveawaybase.com/category/worldwide-2/",
+      "source_type": "giveaway_aggregator",
+      "enabled": true,
+      "crawl_interval_minutes": 180,
+      "crawl_config": {
+        "profile": "real",
+        "region": "international",
+        "target_regions": ["worldwide", "france", "eu"],
+        "adapter": "giveaway_base",
+        "max_pages": 12,
+        "max_depth": 1,
+        "extra_start_urls": [
+          "https://giveawaybase.com/category/gaming/",
+          "https://giveawaybase.com/category/pc/",
+          "https://giveawaybase.com/category/console/",
+          "https://giveawaybase.com/category/technology/"
+        ],
+        "notes": "Single adapter; OPEN TO WORLDWIDE preferred; US-only rejected locally"
+      }
+    },
+    {
+      "name": "GleamFinder International",
+      "base_url": "https://gleamfinder.com/category/international/",
+      "source_type": "giveaway_aggregator",
+      "enabled": true,
+      "crawl_interval_minutes": 180,
+      "crawl_config": {
+        "profile": "real",
+        "region": "international",
+        "target_regions": ["worldwide", "france", "eu"],
+        "adapter": "gleam_finder",
+        "max_pages": 10,
+        "max_depth": 1,
+        "notes": "Entry URLs feed existing Gleam platform identity/parser"
+      }
+    },
+    {
+      "name": "SweepWidget Directory",
+      "base_url": "https://sweepwidget.com/giveaways/?sort=latest",
+      "source_type": "giveaway_aggregator",
+      "enabled": true,
+      "crawl_interval_minutes": 180,
+      "crawl_config": {
+        "profile": "real",
+        "region": "international",
+        "target_regions": ["worldwide", "france", "eu"],
+        "adapter": "sweepwidget",
+        "max_pages": 10,
+        "max_depth": 1,
+        "notes": "Platform parser; never assume Worldwide when geo missing"
+      }
+    },
+    {
+      "name": "Gleam.io Directory",
+      "base_url": "https://gleam.io/giveaways",
+      "source_type": "other",
+      "enabled": true,
+      "crawl_interval_minutes": 360,
+      "crawl_config": {
+        "profile": "real",
+        "region": "international",
+        "target_regions": ["worldwide", "france", "eu"],
+        "adapter": "gleam",
+        "max_pages": 8,
+        "max_depth": 1,
+        "notes": "Official directory often JS-rendered; campaigns parsed by existing Gleam parser when links present"
+      }
+    },
+    {
+      "name": "WorldFreePrizes Worldwide",
+      "base_url": "https://www.worldfreeprizes.com/country/worldwide/",
+      "source_type": "giveaway_aggregator",
+      "enabled": true,
+      "crawl_interval_minutes": 180,
+      "crawl_config": {
+        "profile": "real",
+        "region": "international",
+        "target_regions": ["worldwide", "france", "eu"],
+        "adapter": "world_free_prizes",
+        "max_pages": 10,
+        "max_depth": 1,
+        "extra_start_urls": [
+          "https://www.worldfreeprizes.com/category/cash/",
+          "https://www.worldfreeprizes.com/category/gift-cards/",
+          "https://www.worldfreeprizes.com/category/electronics/",
+          "https://www.worldfreeprizes.com/category/gaming/"
+        ],
+        "notes": "Prefer Worldwide + Cash/Gift Cards/Electronics/Gaming; skip Travel/Crypto"
+      }
+    },
+    {
+      "name": "ThePrizeFinder Worldwide",
+      "base_url": "https://www.theprizefinder.com/search/competitions?keys=worldwide",
+      "source_type": "giveaway_aggregator",
+      "enabled": true,
+      "crawl_interval_minutes": 240,
+      "crawl_config": {
+        "profile": "real",
+        "region": "international",
+        "target_regions": ["worldwide", "france", "eu"],
+        "adapter": "the_prize_finder",
+        "max_pages": 10,
+        "max_depth": 1,
+        "notes": "Only keep Restriction=Worldwide; Tier B secondary discovery"
+      }
+    },
+    {
+      "name": "SweepstakesBible Worldwide",
+      "base_url": "https://www.sweepstakesbible.com/tags/worldwide",
+      "source_type": "giveaway_aggregator",
+      "enabled": true,
+      "crawl_interval_minutes": 240,
+      "crawl_config": {
+        "profile": "real",
+        "region": "international",
+        "target_regions": ["worldwide", "france", "eu"],
+        "adapter": "sweepstakes_bible",
+        "max_pages": 10,
+        "max_depth": 1,
+        "notes": "Tier B; travel prize types skipped at adapter"
+      }
+    },
+    {
       "name": "Concours du Net",
       "base_url": "https://www.concours-du-net.com/",
       "source_type": "giveaway_aggregator",
@@ -16,8 +156,8 @@
       }
     },
     {
-      "name": "Le Démon du Jeu",
-      "base_url": "https://www.ledemondujeu.com/",
+      "name": "Le Démon du Jeu High-Tech",
+      "base_url": "https://www.ledemondujeu.com/concours-gagner-high-tech-1.html",
       "source_type": "giveaway_aggregator",
       "enabled": true,
       "crawl_interval_minutes": 180,
@@ -27,12 +167,13 @@
         "target_regions": ["france", "eu", "worldwide"],
         "adapter": "le_demon_du_jeu",
         "max_pages": 10,
-        "max_depth": 1
+        "max_depth": 1,
+        "notes": "High-tech listing; France resident phrase => eligible without Gemini"
       }
     },
     {
-      "name": "Concours.fr",
-      "base_url": "https://www.concours.fr/",
+      "name": "Concours.fr High-Tech",
+      "base_url": "https://www.concours.fr/categorie-high-tech/",
       "source_type": "giveaway_aggregator",
       "enabled": true,
       "crawl_interval_minutes": 180,
@@ -111,7 +252,7 @@
       }
     },
     {
-      "name": "ThePrizeFinder",
+      "name": "ThePrizeFinder RSS",
       "base_url": "https://www.theprizefinder.com/rss.xml",
       "source_type": "giveaway_aggregator",
       "enabled": false,
@@ -124,7 +265,7 @@
         "max_pages": 10,
         "max_depth": 1,
         "enabled_reason": "country_incompatible",
-        "notes": "UK-leaning competitions RSS; disabled for France-first profile"
+        "notes": "UK-leaning RSS hub; replaced by Worldwide search source for France-first"
       }
     },
     {
@@ -179,19 +320,48 @@
       }
     },
     {
-      "name": "Gleam.io",
+      "name": "Gleam.io (homepage legacy)",
       "base_url": "https://gleam.io/",
       "source_type": "other",
-      "enabled": true,
+      "enabled": false,
       "crawl_interval_minutes": 1440,
       "crawl_config": {
         "profile": "real",
         "region": "international",
         "target_regions": ["worldwide", "france", "eu"],
         "adapter": "gleam",
-        "max_pages": 5,
-        "max_depth": 1,
-        "notes": "Platform parser (not aggregator). Campaign URLs gleam.io/<id>/... are HTTP-parseable; marketing homepage often 403. Main discovery via aggregator entry_urls + direct campaign seeds."
+        "enabled_reason": "superseded",
+        "notes": "Replaced by Gleam.io Directory (/giveaways)"
+      }
+    },
+    {
+      "name": "Le Démon du Jeu (home legacy)",
+      "base_url": "https://www.ledemondujeu.com/",
+      "source_type": "giveaway_aggregator",
+      "enabled": false,
+      "crawl_interval_minutes": 180,
+      "crawl_config": {
+        "profile": "real",
+        "region": "france",
+        "target_regions": ["france", "eu", "worldwide"],
+        "adapter": "le_demon_du_jeu",
+        "enabled_reason": "superseded",
+        "notes": "Replaced by High-Tech listing URL"
+      }
+    },
+    {
+      "name": "Concours.fr (home legacy)",
+      "base_url": "https://www.concours.fr/",
+      "source_type": "giveaway_aggregator",
+      "enabled": false,
+      "crawl_interval_minutes": 180,
+      "crawl_config": {
+        "profile": "real",
+        "region": "france",
+        "target_regions": ["france", "eu", "worldwide"],
+        "adapter": "concours_fr",
+        "enabled_reason": "superseded",
+        "notes": "Replaced by categorie-high-tech listing"
       }
     },
     {

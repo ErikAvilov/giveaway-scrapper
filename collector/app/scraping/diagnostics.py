@@ -195,3 +195,108 @@ def count_would_analyze(candidates: list[dict[str, Any]], *, threshold: float) -
         for item in candidates
         if build_candidate_diagnostics(item, source_name="", threshold=threshold).would_analyze
     )
+
+
+@dataclass(slots=True)
+class SourceFilterSummary:
+    source: str
+    pages_fetched: int
+    candidates: int
+    france_eligible: int
+    france_ineligible: int
+    france_unknown: int
+    wanted: int
+    unwanted: int
+    dead_urls: int
+    duplicates: int
+    would_keep: int
+
+    def format_lines(self) -> list[str]:
+        return [
+            self.source,
+            f"Fetched: {self.pages_fetched}",
+            f"Candidates: {self.candidates}",
+            f"Worldwide/France: {self.france_eligible}",
+            f"France ineligible: {self.france_ineligible}",
+            f"France unknown: {self.france_unknown}",
+            f"Wanted prizes: {self.wanted}",
+            f"Unwanted: {self.unwanted}",
+            f"Dead: {self.dead_urls}",
+            f"Duplicates: {self.duplicates}",
+            f"Would keep: {self.would_keep}",
+        ]
+
+
+def summarize_source_candidates(
+    *,
+    source_name: str,
+    pages_fetched: int,
+    candidates: list[dict[str, Any]],
+    threshold: float,
+) -> SourceFilterSummary:
+    """Aggregate France / prize / keep stats for real-test dry output."""
+    fr_ok = fr_no = fr_unk = 0
+    wanted = unwanted = 0
+    dead = 0
+    seen_keys: set[str] = set()
+    duplicates = 0
+    would_keep = 0
+
+    for item in candidates:
+        fe = item.get("france_eligibility")
+        if fe == "eligible" or item.get("eligible_france") is True:
+            fr_ok += 1
+        elif fe == "ineligible" or item.get("eligible_france") is False:
+            fr_no += 1
+        else:
+            fr_unk += 1
+
+        if item.get("wanted_prize") is True:
+            wanted += 1
+        elif item.get("wanted_prize") is False:
+            unwanted += 1
+
+        status = str(item.get("entry_url_status") or "")
+        if status == "gone":
+            dead += 1
+
+        key = None
+        if item.get("platform") and item.get("platform_campaign_id"):
+            key = f"{item['platform']}:{item['platform_campaign_id']}"
+        elif item.get("entry_url"):
+            key = f"entry:{item['entry_url']}"
+        elif item.get("url"):
+            key = f"url:{item['url']}"
+        if key:
+            if key in seen_keys:
+                duplicates += 1
+            else:
+                seen_keys.add(key)
+
+        diag = build_candidate_diagnostics(
+            item, source_name=source_name, threshold=threshold
+        )
+        keep = (
+            diag.would_analyze
+            and (fe == "eligible" or item.get("eligible_france") is True)
+            and item.get("wanted_prize") is not False
+            and item.get("entry_acceptable") is not False
+            and status != "gone"
+            and str(item.get("status") or "") not in {"rejected", "expired"}
+        )
+        if keep:
+            would_keep += 1
+
+    return SourceFilterSummary(
+        source=source_name,
+        pages_fetched=pages_fetched,
+        candidates=len(candidates),
+        france_eligible=fr_ok,
+        france_ineligible=fr_no,
+        france_unknown=fr_unk,
+        wanted=wanted,
+        unwanted=unwanted,
+        dead_urls=dead,
+        duplicates=duplicates,
+        would_keep=would_keep,
+    )

@@ -25,6 +25,7 @@ _GLEAM_PATH = re.compile(
 
 _NON_CAMPAIGN_KEYS = frozenset(
     {
+        "giveaways",
         "app",
         "blog",
         "docs",
@@ -175,6 +176,14 @@ class GleamCampaign:
             "social_entry_types": [a.entry_type for a in self.social_actions],
             "email_entry_types": [a.entry_type for a in self.email_actions],
             "upload_entry_types": [a.entry_type for a in self.upload_actions],
+            "mandatory_actions": [
+                {"entry_type": a.entry_type, "mandatory": True}
+                for a in self.mandatory_actions
+            ],
+            "optional_actions": [
+                {"entry_type": a.entry_type, "mandatory": False}
+                for a in self.optional_actions
+            ],
             "login_required": self.login_required,
             "login_types": list(self.login_types),
             "has_paid_entry_methods": self.has_paid_entry_methods,

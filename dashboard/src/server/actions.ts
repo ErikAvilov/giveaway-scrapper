@@ -2,6 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import {
+  clearGiveawayReminder,
+  setGiveawayReminder,
   setSourceEnabled,
   setSourceInterval,
   updateManualStatus,
@@ -13,6 +15,23 @@ export async function updateGiveawayManualStatusAction(
   manualStatus: ManualStatus,
 ) {
   await updateManualStatus(giveawayId, manualStatus);
+  revalidatePath("/giveaways");
+  revalidatePath("/");
+  revalidatePath(`/giveaways/${giveawayId}`);
+}
+
+export async function setGiveawayReminderAction(
+  giveawayId: string,
+  hours: number,
+) {
+  await setGiveawayReminder(giveawayId, hours);
+  revalidatePath("/giveaways");
+  revalidatePath("/");
+  revalidatePath(`/giveaways/${giveawayId}`);
+}
+
+export async function clearGiveawayReminderAction(giveawayId: string) {
+  await clearGiveawayReminder(giveawayId);
   revalidatePath("/giveaways");
   revalidatePath("/");
   revalidatePath(`/giveaways/${giveawayId}`);

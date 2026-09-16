@@ -46,6 +46,20 @@ Prize preference (critical):
   restricted_gift_card, wanted_prize=false, requires_additional_spend=true.
 - Set requires_travel / requires_additional_spend from the prize terms when clear.
 
+Public social entry gate (independent from prize preference):
+- requires_public_social_action=true / entry_acceptable=false when a MANDATORY
+  entry step requires a public social action: tag/mention friends, leave a comment,
+  repost/retweet/reshare, share to story, publish a post/photo/video, public hashtag,
+  quote-post, public testimonial/review, or other visible account posting.
+- French equivalents count the same (taguer/mentionner un ami, commenter, partager,
+  publier en story, utiliser un hashtag, etc.).
+- Following or subscribing alone is NOT a public social action (entry_acceptable=true).
+- Email/form/newsletter/login/visit/answer-a-question alone are acceptable.
+- Optional bonus shares/tags must NOT reject if the giveaway can be entered without them.
+- Do not reject merely because Instagram/Facebook/TikTok/X is mentioned.
+- When rejecting for this reason, set entry_rejection_reason to exactly:
+  "requires public social-media action".
+
 When multiple GIVEAWAY blocks are provided in one request:
 - Each giveaway is independent; never mix information between giveaways.
 - Preserve each giveaway_id exactly as supplied (opaque UUID).

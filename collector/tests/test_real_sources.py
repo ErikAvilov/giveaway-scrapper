@@ -42,20 +42,25 @@ def test_real_sources_file_has_french_and_international() -> None:
     assert len(rows) >= 12
     enabled = [r for r in rows if r.get("enabled")]
     disabled = [r for r in rows if not r.get("enabled")]
-    assert len(enabled) == 6  # 5 FR aggregators + Gleam
-    assert {r["name"] for r in enabled} == {
-        "Concours du Net",
-        "Le Démon du Jeu",
-        "Concours.fr",
-        "Mes Échantillons Gratuits",
-        "ÉchantillonsClub",
-        "Gleam.io",
-    }
+    enabled_names = {r["name"] for r in enabled}
+    assert "GleamGiveaways" in enabled_names
+    assert "GiveawayBase" in enabled_names
+    assert "GleamFinder International" in enabled_names
+    assert "SweepWidget Directory" in enabled_names
+    assert "Gleam.io Directory" in enabled_names
+    assert "WorldFreePrizes Worldwide" in enabled_names
+    assert "ThePrizeFinder Worldwide" in enabled_names
+    assert "SweepstakesBible Worldwide" in enabled_names
+    assert "Concours du Net" in enabled_names
+    assert "Le Démon du Jeu High-Tech" in enabled_names
+    assert "Concours.fr High-Tech" in enabled_names
+    assert "Mes Échantillons Gratuits" in enabled_names
+    assert "ÉchantillonsClub" in enabled_names
     disabled_names = {r["name"] for r in disabled}
     assert {
         "Giveario US",
         "Giveario UK",
-        "ThePrizeFinder",
+        "ThePrizeFinder RSS",
         "OnlineCompetitions",
         "PrizeRunner",
         "ContestGirl",
@@ -66,7 +71,7 @@ def test_real_sources_file_has_french_and_international() -> None:
     for name in (
         "Giveario US",
         "Giveario UK",
-        "ThePrizeFinder",
+        "ThePrizeFinder RSS",
         "OnlineCompetitions",
         "PrizeRunner",
         "ContestGirl",
@@ -74,8 +79,8 @@ def test_real_sources_file_has_french_and_international() -> None:
         assert by_name[name]["crawl_config"].get("enabled_reason") == "country_incompatible"
     for fr_name in (
         "Concours du Net",
-        "Le Démon du Jeu",
-        "Concours.fr",
+        "Le Démon du Jeu High-Tech",
+        "Concours.fr High-Tech",
         "Mes Échantillons Gratuits",
         "ÉchantillonsClub",
     ):
@@ -84,12 +89,12 @@ def test_real_sources_file_has_french_and_international() -> None:
             "eu",
             "worldwide",
         ]
-    gleam = by_name["Gleam.io"]
+    gleam = by_name["Gleam.io Directory"]
     assert gleam["enabled"] is True
     assert gleam["source_type"] == "other"
     assert gleam["crawl_config"]["adapter"] == "gleam"
     assert gleam["crawl_config"]["target_regions"] == ["worldwide", "france", "eu"]
-    assert gleam["base_url"].startswith("https://gleam.io")
+    assert "gleam.io/giveaways" in gleam["base_url"]
     assert all(
         r["source_type"] in {"giveaway_aggregator", "other"} for r in rows
     )
@@ -101,7 +106,8 @@ def test_real_sources_file_has_french_and_international() -> None:
     assert "https://www.concours-du-net.com/" in urls
     assert "https://giveario.com/en/countries/united-states/" in urls
     assert "https://www.theprizefinder.com/rss.xml" in urls
-    assert "https://gleam.io/" in urls
+    assert "https://gleamgiveaways.com/" in urls
+    assert "https://giveawaybase.com/category/worldwide-2/" in urls
     regions = {r["crawl_config"].get("region") for r in enabled}
     assert "france" in regions
     assert "international" in regions
@@ -113,8 +119,8 @@ def test_seed_real_sources(settings: Settings, migrated_db) -> None:
         conn.commit()
         enabled = [s for s in seeded if s.enabled]
         assert len(seeded) >= 12
-        assert len(enabled) == 6
-        assert {s.name for s in seeded} >= {"Gleam.io"}
+        assert len(enabled) >= 13
+        assert {s.name for s in seeded} >= {"GleamGiveaways", "GiveawayBase"}
         assert all(
             s.source_type
             in {SourceType.GIVEAWAY_AGGREGATOR, SourceType.OTHER}
@@ -144,6 +150,12 @@ def test_adapter_registry() -> None:
         "prize_runner",
         "contestgirl",
         "gleam",
+        "gleam_giveaways",
+        "giveaway_base",
+        "gleam_finder",
+        "sweepwidget",
+        "world_free_prizes",
+        "sweepstakes_bible",
     }.issubset(keys)
 
 
@@ -339,8 +351,9 @@ def test_crawl_real_test_never_instantiates_gemini(settings: Settings, migrated_
     assert "Gemini not invoked" in result.output
     gemini_cls.assert_not_called()
     gemini_svc.assert_not_called()
-    # Enabled France-first sources only (5 FR aggregators + Gleam).
-    assert run_spider.call_count == 6
+    # Enabled France-first discovery sources (aggregators + platform directories).
+    assert run_spider.call_count >= 13
+    assert "Worldwide/France:" in result.output or "Would analyze:" in result.output
 
 
 def test_cli_help_lists_seed_and_real_test() -> None:

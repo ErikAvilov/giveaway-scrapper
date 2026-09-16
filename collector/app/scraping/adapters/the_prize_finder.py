@@ -80,19 +80,45 @@ class ThePrizeFinderAdapter:
             )
 
         is_detail = bool(_DETAIL_RE.match(path)) and not _CATEGORY_BLOCK.search(path)
-        # Category / listing pages
+        # Category / search / listing pages
         if not is_detail:
             follow: list[str] = []
-            for href in css_attr(response, 'a[href*="/competitions/"]::attr(href)'):
-                abs_url = absolute_url(page_url, href)
-                if not abs_url:
-                    continue
-                p = urlparse(abs_url).path or ""
-                if _DETAIL_RE.match(p) and not _CATEGORY_BLOCK.search(p):
-                    follow.append(abs_url)
+            prefer_worldwide = "worldwide" in page_url.lower() or "keys=worldwide" in page_url.lower()
+            articles = response.css("article") or []
+            if articles and prefer_worldwide:
+                for art in articles:
+                    text = (
+                        art.get_all_text(separator=" ", strip=True)
+                        if hasattr(art, "get_all_text")
+                        else str(art)
+                    )
+                    # Only follow cards that look Worldwide when searching worldwide.
+                    if "worldwide" not in text.lower():
+                        continue
+                    for href in (
+                        [str(x) for x in (art.css('a[href*="/competitions/"]::attr(href)') or [])]
+                        if hasattr(art, "css")
+                        else []
+                    ):
+                        abs_url = absolute_url(page_url, href)
+                        if not abs_url:
+                            continue
+                        p = urlparse(abs_url).path or ""
+                        if _DETAIL_RE.match(p) and not _CATEGORY_BLOCK.search(p):
+                            follow.append(abs_url)
+                            break
+            if not follow:
+                for href in css_attr(response, 'a[href*="/competitions/"]::attr(href)'):
+                    abs_url = absolute_url(page_url, href)
+                    if not abs_url:
+                        continue
+                    p = urlparse(abs_url).path or ""
+                    if _DETAIL_RE.match(p) and not _CATEGORY_BLOCK.search(p):
+                        follow.append(abs_url)
             return PageEnrichment(
                 skip_as_candidate=True,
                 follow_urls=dedupe_urls(follow) or None,
+                meta={"prefer_worldwide": prefer_worldwide},
             )
 
         title = first_css_text(response, ("h1", "h1.node-title", "title"))
@@ -147,6 +173,22 @@ class ThePrizeFinderAdapter:
                     entry_url = abs_url
                     break
 
+        # Soft skip only when Restriction is explicit and not Worldwide/International.
+        # Leave missing restriction for spider/Gemini (unknown ≠ eligible).
+        skip = False
+        if restriction:
+            low = restriction.lower().strip()
+            if (
+                "worldwide" not in low
+                and "international" not in low
+                and re.search(
+                    r"\b(uk|united kingdom|us|usa|united states|canada|australia)\b",
+                    low,
+                )
+                and "france" not in low
+            ):
+                skip = True
+
         return PageEnrichment(
             title=title,
             end_date_text=closing,
@@ -155,7 +197,10 @@ class ThePrizeFinderAdapter:
             restriction_text=restriction,
             entry_method_text=instructions,
             excerpt=body[:3000] if body else None,
-            skip_as_candidate=False,
+            skip_as_candidate=skip,
             follow_urls=None,
-            meta={"entry_url_is_tracker": bool(entry_url and "link-track" in entry_url)},
+            meta={
+                "entry_url_is_tracker": bool(entry_url and "link-track" in entry_url),
+                "skip_reasons": ["restriction_not_worldwide"] if skip else [],
+            },
         )

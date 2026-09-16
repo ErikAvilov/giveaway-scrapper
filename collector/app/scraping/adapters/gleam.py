@@ -11,7 +11,7 @@ from app.platforms.gleam import (
     parse_gleam_campaign_url,
     response_html,
 )
-from app.scraping.adapters.base import PageEnrichment
+from app.scraping.adapters.base import PageEnrichment, absolute_url, css_attr, dedupe_urls
 
 
 class GleamAdapter:
@@ -22,6 +22,25 @@ class GleamAdapter:
     def enrich(self, response: Any, *, page_url: str) -> PageEnrichment:
         path = urlparse(page_url).path or "/"
         key, _slug = parse_gleam_campaign_url(page_url)
+        # Public directory: discover campaign URLs when present in HTML.
+        if key is None and path.rstrip("/") == "/giveaways":
+            follow: list[str] = []
+            for href in css_attr(response, "a::attr(href)"):
+                abs_url = absolute_url(page_url, href)
+                if not abs_url:
+                    continue
+                camp_key, _ = parse_gleam_campaign_url(abs_url)
+                if camp_key:
+                    follow.append(abs_url)
+            return PageEnrichment(
+                skip_as_candidate=True,
+                follow_urls=dedupe_urls(follow) or None,
+                meta={
+                    "gleam_directory": True,
+                    "follow_count": len(dedupe_urls(follow)),
+                    "notes": "Directory often JS-rendered; empty follow list is expected.",
+                },
+            )
         # Marketing / app pages — not campaigns.
         if key is None:
             return PageEnrichment(

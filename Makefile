@@ -12,6 +12,7 @@ LIMIT ?= 25
 	venv install init \
 	db-init seed \
 	purge-giveaways validate-links reset-crawl \
+	reprioritize-entry \
 	crawl crawl-dry crawl-real crawl-real-dry \
 	analyze analyze-all pipeline worker stats health \
 	test lint check \
@@ -35,6 +36,7 @@ help:
 	@echo "  make purge-giveaways      Supprime giveaways + crawl_runs (garde sources)"
 	@echo "  make validate-links       Valide les entry URLs (LIMIT=50 par défaut)"
 	@echo "  make validate-links LIMIT=100"
+	@echo "  make reprioritize-entry   Backfill gate social public (LIMIT=500)"
 	@echo "  make reset-crawl          Remet les sources enabled au prochain crawl"
 	@echo ""
 	@echo "Scraping"
@@ -109,6 +111,9 @@ endif
 
 validate-links:
 	cd $(COLLECTOR) && ../$(PYTHON) -m app.cli validate-links --limit $(LIMIT)
+
+reprioritize-entry:
+	cd $(COLLECTOR) && ../$(PYTHON) -m app.cli reprioritize-entry --limit $(LIMIT)
 
 reset-crawl:
 	cd $(COLLECTOR) && ../$(PYTHON) -m app.cli reset-crawl-schedule

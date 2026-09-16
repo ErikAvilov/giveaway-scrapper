@@ -56,6 +56,10 @@ function mapGiveaway(row: Record<string, unknown>): GiveawayRow {
       row.entry_http_status != null ? Number(row.entry_http_status) : null,
     requires_purchase: row.requires_purchase as boolean | null,
     requires_social: row.requires_social as boolean | null,
+    requires_public_social_action: row.requires_public_social_action as boolean | null,
+    entry_acceptable: row.entry_acceptable as boolean | null,
+    entry_rejection_reason:
+      row.entry_rejection_reason != null ? String(row.entry_rejection_reason) : null,
     entry_method: row.entry_method != null ? String(row.entry_method) : null,
     start_at: row.start_at ? new Date(String(row.start_at)) : null,
     end_at: row.end_at ? new Date(String(row.end_at)) : null,
@@ -71,6 +75,9 @@ function mapGiveaway(row: Record<string, unknown>): GiveawayRow {
     link_hints,
     analysis_json: (row.analysis_json as Record<string, unknown> | null) ?? null,
     manual_status: row.manual_status as ManualStatus,
+    remind_at: row.remind_at ? new Date(String(row.remind_at)) : null,
+    reminder_hours: row.reminder_hours != null ? Number(row.reminder_hours) : null,
+    reminder_due: Boolean(row.reminder_due),
     created_at: new Date(String(row.created_at)),
     updated_at: new Date(String(row.updated_at)),
   };
@@ -97,6 +104,10 @@ export async function getOverviewStats(): Promise<OverviewStats> {
       (SELECT count(*)::int FROM giveaways
         WHERE discovered_at >= date_trunc('day', now() AT TIME ZONE 'UTC')
           AND manual_status <> 'ignored') AS discovered_today,
+      (SELECT count(*)::int FROM giveaways
+        WHERE remind_at IS NOT NULL
+          AND remind_at <= now()
+          AND manual_status <> 'ignored') AS reminders_due,
       (SELECT count(*)::int FROM giveaways WHERE manual_status = 'entered') AS entered,
       (SELECT count(*)::int FROM giveaways WHERE manual_status = 'won') AS won,
       (SELECT count(*)::int FROM giveaways WHERE manual_status = 'ignored') AS ignored
@@ -109,6 +120,7 @@ export async function getOverviewStats(): Promise<OverviewStats> {
     ending_24h: Number(r.ending_24h),
     ending_7d: Number(r.ending_7d),
     discovered_today: Number(r.discovered_today),
+    reminders_due: Number(r.reminders_due),
     entered: Number(r.entered),
     won: Number(r.won),
     ignored: Number(r.ignored),
@@ -117,7 +129,8 @@ export async function getOverviewStats(): Promise<OverviewStats> {
 
 export async function listRecentGiveaways(limit = 8): Promise<GiveawayRow[]> {
   const rows = await sql`
-    SELECT g.*, s.name AS source_name
+    SELECT g.*, s.name AS source_name,
+           (g.remind_at IS NOT NULL AND g.remind_at <= now()) AS reminder_due
     FROM giveaways g
     LEFT JOIN sources s ON s.id = g.source_id
     WHERE g.manual_status <> 'ignored'
@@ -129,7 +142,8 @@ export async function listRecentGiveaways(limit = 8): Promise<GiveawayRow[]> {
 
 export async function listEndingSoon(limit = 8): Promise<GiveawayRow[]> {
   const rows = await sql`
-    SELECT g.*, s.name AS source_name
+    SELECT g.*, s.name AS source_name,
+           (g.remind_at IS NOT NULL AND g.remind_at <= now()) AS reminder_due
     FROM giveaways g
     LEFT JOIN sources s ON s.id = g.source_id
     WHERE g.end_at IS NOT NULL
@@ -165,7 +179,12 @@ export async function listGiveaways(
   const showUnknownFrance = filters.show_unknown_france === true;
   const showIneligible = filters.show_ineligible === true;
   const showUnwanted = filters.show_unwanted === true;
+  const acceptableOnly = filters.acceptable_only !== false;
+  const publicSocialRequired = filters.public_social_required === true ? true : null;
+  const entryRejectionReason = filters.entry_rejection_reason?.trim() || null;
   const endingSoon = filters.ending_soon === true ? true : null;
+  const remindersDue = filters.reminders_due === true ? true : null;
+  const hasReminder = filters.has_reminder === true ? true : null;
   const entryMethod = filters.entry_method || null;
   const prizeCategory =
     filters.prize_category && filters.prize_category !== "all"
@@ -186,16 +205,19 @@ export async function listGiveaways(
   const orderSql =
     sort === "ending_soon"
       ? sql`g.end_at ASC NULLS LAST`
-      : sort === "highest_value"
-        ? sql`g.prize_value_eur DESC NULLS LAST, g.discovered_at DESC`
-        : sort === "highest_confidence"
-          ? sql`g.confidence DESC NULLS LAST, g.discovered_at DESC`
-          : sort === "newest"
-            ? sql`g.discovered_at DESC`
-            : sql`CASE WHEN g.wanted_prize IS TRUE THEN 0 WHEN g.wanted_prize IS NULL THEN 1 ELSE 2 END, g.prize_priority DESC NULLS LAST, g.discovered_at DESC`;
+      : sort === "remind_at"
+        ? sql`g.remind_at ASC NULLS LAST`
+        : sort === "highest_value"
+          ? sql`g.prize_value_eur DESC NULLS LAST, g.discovered_at DESC`
+          : sort === "highest_confidence"
+            ? sql`g.confidence DESC NULLS LAST, g.discovered_at DESC`
+            : sort === "newest"
+              ? sql`g.discovered_at DESC`
+              : sql`CASE WHEN g.wanted_prize IS TRUE THEN 0 WHEN g.wanted_prize IS NULL THEN 1 ELSE 2 END, g.prize_priority DESC NULLS LAST, g.discovered_at DESC`;
 
   const rows = await sql`
     SELECT g.*, s.name AS source_name,
+           (g.remind_at IS NOT NULL AND g.remind_at <= now()) AS reminder_due,
            count(*) OVER()::int AS _total
     FROM giveaways g
     LEFT JOIN sources s ON s.id = g.source_id
@@ -231,6 +253,18 @@ export async function listGiveaways(
         OR g.wanted_prize IS FALSE
       )
       AND (
+        ${acceptableOnly}::boolean IS FALSE
+        OR g.entry_acceptable IS DISTINCT FROM FALSE
+      )
+      AND (
+        ${publicSocialRequired}::boolean IS NULL
+        OR g.requires_public_social_action IS TRUE
+      )
+      AND (
+        ${entryRejectionReason}::text IS NULL
+        OR g.entry_rejection_reason ILIKE ${entryRejectionReason}
+      )
+      AND (
         ${hideGone}::boolean IS FALSE
         OR g.entry_url_status IS NULL
         OR g.entry_url_status <> 'gone'
@@ -247,6 +281,14 @@ export async function listGiveaways(
           AND g.end_at >= now()
           AND g.end_at <= now() + interval '7 days'
         )
+      )
+      AND (
+        ${remindersDue}::boolean IS NULL
+        OR (g.remind_at IS NOT NULL AND g.remind_at <= now())
+      )
+      AND (
+        ${hasReminder}::boolean IS NULL
+        OR g.remind_at IS NOT NULL
       )
       AND (${minValue}::numeric IS NULL OR g.prize_value_eur >= ${minValue})
       AND (
@@ -270,7 +312,8 @@ export async function listGiveaways(
 
 export async function getGiveaway(id: string): Promise<GiveawayRow | null> {
   const rows = await sql`
-    SELECT g.*, s.name AS source_name
+    SELECT g.*, s.name AS source_name,
+           (g.remind_at IS NOT NULL AND g.remind_at <= now()) AS reminder_due
     FROM giveaways g
     LEFT JOIN sources s ON s.id = g.source_id
     WHERE g.id = ${id}::uuid
@@ -301,10 +344,64 @@ export async function updateManualStatus(
         updated_at = now()
     WHERE id = ${id}::uuid
     RETURNING *,
-      (SELECT name FROM sources WHERE id = giveaways.source_id) AS source_name
+      (SELECT name FROM sources WHERE id = giveaways.source_id) AS source_name,
+      (remind_at IS NOT NULL AND remind_at <= now()) AS reminder_due
   `;
   if (!rows.length) return null;
   return mapGiveaway(rows[0] as Record<string, unknown>);
+}
+
+const REMINDER_HOURS_MIN = 1;
+const REMINDER_HOURS_MAX = 24 * 30;
+
+export async function setGiveawayReminder(
+  id: string,
+  hours: number,
+): Promise<GiveawayRow | null> {
+  const h = Math.trunc(Number(hours));
+  if (!Number.isFinite(h) || h < REMINDER_HOURS_MIN || h > REMINDER_HOURS_MAX) {
+    throw new Error(`Reminder hours must be between ${REMINDER_HOURS_MIN} and ${REMINDER_HOURS_MAX}`);
+  }
+  const rows = await sql`
+    UPDATE giveaways
+    SET remind_at = now() + (${h} * interval '1 hour'),
+        reminder_hours = ${h},
+        updated_at = now()
+    WHERE id = ${id}::uuid
+    RETURNING *,
+      (SELECT name FROM sources WHERE id = giveaways.source_id) AS source_name,
+      (remind_at IS NOT NULL AND remind_at <= now()) AS reminder_due
+  `;
+  if (!rows.length) return null;
+  return mapGiveaway(rows[0] as Record<string, unknown>);
+}
+
+export async function clearGiveawayReminder(
+  id: string,
+): Promise<GiveawayRow | null> {
+  const rows = await sql`
+    UPDATE giveaways
+    SET remind_at = NULL,
+        reminder_hours = NULL,
+        updated_at = now()
+    WHERE id = ${id}::uuid
+    RETURNING *,
+      (SELECT name FROM sources WHERE id = giveaways.source_id) AS source_name,
+      false AS reminder_due
+  `;
+  if (!rows.length) return null;
+  return mapGiveaway(rows[0] as Record<string, unknown>);
+}
+
+export async function countRemindersDue(): Promise<number> {
+  const rows = await sql`
+    SELECT count(*)::int AS n
+    FROM giveaways
+    WHERE remind_at IS NOT NULL
+      AND remind_at <= now()
+      AND manual_status <> 'ignored'
+  `;
+  return Number((rows[0] as { n: number }).n);
 }
 
 export async function listSources(): Promise<SourceRow[]> {

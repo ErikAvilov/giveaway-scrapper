@@ -64,6 +64,9 @@ export interface GiveawayRow {
   entry_http_status: number | null;
   requires_purchase: boolean | null;
   requires_social: boolean | null;
+  requires_public_social_action: boolean | null;
+  entry_acceptable: boolean | null;
+  entry_rejection_reason: string | null;
   entry_method: string | null;
   start_at: Date | null;
   end_at: Date | null;
@@ -79,6 +82,10 @@ export interface GiveawayRow {
   link_hints: string[];
   analysis_json: Record<string, unknown> | null;
   manual_status: ManualStatus;
+  remind_at: Date | null;
+  reminder_hours: number | null;
+  /** Computed at query time: remind_at is set and <= now(). */
+  reminder_due: boolean;
   created_at: Date;
   updated_at: Date;
 }
@@ -120,6 +127,7 @@ export interface OverviewStats {
   ending_24h: number;
   ending_7d: number;
   discovered_today: number;
+  reminders_due: number;
   entered: number;
   won: number;
   ignored: number;
@@ -130,7 +138,8 @@ export type GiveawaySort =
   | "ending_soon"
   | "highest_value"
   | "highest_confidence"
-  | "priority";
+  | "priority"
+  | "remind_at";
 
 export interface GiveawayFilters {
   q?: string;
@@ -142,6 +151,11 @@ export interface GiveawayFilters {
   show_unknown_france?: boolean;
   show_ineligible?: boolean;
   show_unwanted?: boolean;
+  acceptable_only?: boolean;
+  public_social_required?: boolean;
+  entry_rejection_reason?: string;
+  reminders_due?: boolean;
+  has_reminder?: boolean;
   prize_category?: PrizeCategory | "all";
   entry_method?: string;
   source_id?: string;

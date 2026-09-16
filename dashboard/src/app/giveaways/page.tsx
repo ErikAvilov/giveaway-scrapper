@@ -36,6 +36,7 @@ export default async function GiveawaysPage({
   const wantedParam = oneLast(sp.wanted);
   const franceParam = oneLast(sp.france);
   const hideGoneParam = oneLast(sp.hide_gone);
+  const acceptableParam = oneLast(sp.acceptable);
   const values = {
     q: one(sp.q),
     status: one(sp.status),
@@ -50,18 +51,31 @@ export default async function GiveawaysPage({
     ending_soon: one(sp.ending_soon),
     wanted: wantedParam,
     hide_gone: hideGoneParam,
+    acceptable: acceptableParam,
+    public_social: one(sp.public_social),
+    entry_rejection_reason: one(sp.entry_rejection_reason),
+    reminders_due: one(sp.reminders_due),
+    has_reminder: one(sp.has_reminder),
     show_unknown_france: one(sp.show_unknown_france),
     show_ineligible: one(sp.show_ineligible),
     show_unwanted: one(sp.show_unwanted),
     id: one(sp.id),
   };
 
-  // Defaults: Wanted + France eligible + hide dead links + active status.
+  // Defaults: Wanted + France eligible + hide dead links + acceptable entry + active.
   const wantedOnly = values.wanted !== "0";
   const franceOnly = values.france !== "0";
   const hideGone = values.hide_gone !== "0";
+  const publicSocialInspect = values.public_social === "1";
+  const acceptableOnly = publicSocialInspect
+    ? false
+    : values.acceptable !== "0";
   const viewingIgnored = values.manual_status === "ignored";
+  const viewingRemindersDue = values.reminders_due === "1";
   const statusDefault = (values.status as "active" | "expired" | "all") || "active";
+  const sortDefault =
+    (values.sort as GiveawaySort) ||
+    (viewingRemindersDue ? "remind_at" : "priority");
 
   let error: string | null = null;
   let rows: Awaited<ReturnType<typeof listGiveaways>>["rows"] = [];
@@ -80,13 +94,18 @@ export default async function GiveawaysPage({
         source_id: values.source_id || undefined,
         entry_method: values.entry_method || undefined,
         prize_category: (values.prize_category as PrizeCategory | "all") || "all",
-        sort: (values.sort as GiveawaySort) || "priority",
+        sort: sortDefault,
         min_value: values.min_value ? Number(values.min_value) : undefined,
         france: viewingIgnored ? false : franceOnly,
         free: values.free === "1" ? true : undefined,
         ending_soon: values.ending_soon === "1" ? true : undefined,
+        reminders_due: values.reminders_due === "1" ? true : undefined,
+        has_reminder: values.has_reminder === "1" ? true : undefined,
         wanted_only: viewingIgnored ? false : wantedOnly,
         hide_gone: viewingIgnored ? false : hideGone,
+        acceptable_only: viewingIgnored ? false : acceptableOnly,
+        public_social_required: publicSocialInspect,
+        entry_rejection_reason: values.entry_rejection_reason || undefined,
         show_unknown_france: values.show_unknown_france === "1",
         show_ineligible: values.show_ineligible === "1",
         show_unwanted: values.show_unwanted === "1",
@@ -112,7 +131,13 @@ export default async function GiveawaysPage({
         <header className="mb-4 flex flex-wrap items-end justify-between gap-2">
           <div>
             <h1 className="text-xl font-semibold">
-              {viewingIgnored ? "Ignored list" : "Giveaways"}
+              {viewingIgnored
+                ? "Ignored list"
+                : viewingRemindersDue
+                  ? "Rappels dus"
+                  : publicSocialInspect
+                    ? "Public social action"
+                    : "Giveaways"}
             </h1>
             <p className="text-sm text-zinc-500">
               {total} matching rows
@@ -120,6 +145,18 @@ export default async function GiveawaysPage({
             </p>
           </div>
           <div className="flex items-center gap-3 text-sm">
+            {viewingRemindersDue ? (
+              <Link href="/giveaways" className="text-sky-700 hover:underline dark:text-sky-400">
+                ← Back to main view
+              </Link>
+            ) : (
+              <Link
+                href="/giveaways?reminders_due=1&wanted=0&france=0&sort=remind_at"
+                className="text-amber-700 hover:underline dark:text-amber-400"
+              >
+                Rappels dus
+              </Link>
+            )}
             {viewingIgnored ? (
               <Link href="/giveaways" className="text-sky-700 hover:underline dark:text-sky-400">
                 ← Back to main view
@@ -148,10 +185,19 @@ export default async function GiveawaysPage({
             values={{
               ...values,
               status: statusDefault,
+              sort: sortDefault,
               wanted: viewingIgnored ? "0" : wantedOnly ? "1" : "0",
               france: viewingIgnored ? "0" : franceOnly ? "1" : "0",
               hide_gone: viewingIgnored ? "0" : hideGone ? "1" : "0",
+              acceptable: viewingIgnored || publicSocialInspect
+                ? "0"
+                : acceptableOnly
+                  ? "1"
+                  : "0",
+              public_social: publicSocialInspect ? "1" : undefined,
               manual_status: values.manual_status ?? "all",
+              reminders_due: values.reminders_due,
+              has_reminder: values.has_reminder,
             }}
           />
           <GiveawaysTable

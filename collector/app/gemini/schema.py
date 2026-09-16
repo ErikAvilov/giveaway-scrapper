@@ -132,6 +132,32 @@ class GiveawayAnalysis(BaseModel):
     )
     requires_purchase: bool | None = None
     requires_social: bool | None = None
+    requires_public_social_action: bool | None = Field(
+        default=None,
+        description=(
+            "True if a MANDATORY entry step requires a public social action "
+            "(tag/mention friends, comment, repost/retweet, share to story, "
+            "publish a post/photo/video, public hashtag, UGC). "
+            "False if entry needs no such public action. "
+            "Following/subscribing alone is NOT a public action. "
+            "Optional bonus shares do NOT count. Null if unclear."
+        ),
+    )
+    entry_acceptable: bool | None = Field(
+        default=None,
+        description=(
+            "False when mandatory public social-media action is required; "
+            "true when entry is possible without public posting/comment/tag; "
+            "null if unclear. Independent from wanted_prize and France."
+        ),
+    )
+    entry_rejection_reason: str | None = Field(
+        default=None,
+        description=(
+            "When entry_acceptable=false due to public social actions, use: "
+            "'requires public social-media action'. Else null."
+        ),
+    )
     start_date: datetime | None = None
     end_date: datetime | None = None
     terms_url: str | None = None
@@ -220,6 +246,23 @@ class GiveawayBatchItemAnalysis(BaseModel):
     )
     requires_purchase: bool | None = None
     requires_social: bool | None = None
+    requires_public_social_action: bool | None = Field(
+        default=None,
+        description=(
+            "True if mandatory entry requires public social action "
+            "(tag/comment/repost/story/post/hashtag/UGC). Follow-only is false."
+        ),
+    )
+    entry_acceptable: bool | None = Field(
+        default=None,
+        description=(
+            "False when mandatory public social action required; true when not; null if unclear."
+        ),
+    )
+    entry_rejection_reason: str | None = Field(
+        default=None,
+        description="Use 'requires public social-media action' when rejecting for public social.",
+    )
     start_date: datetime | None = None
     end_date: datetime | None = None
     terms_url: str | None = None

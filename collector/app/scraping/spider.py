@@ -12,6 +12,7 @@ from scrapling.fetchers import FetcherSession
 from scrapling.spiders import Request, Spider
 from scrapling.spiders.session import SessionManager
 
+from app.extraction.entry_acceptability import assess_entry_acceptability
 from app.extraction.entry_assessment import (
     EntryAssessment,
     EntryFriction,
@@ -25,6 +26,7 @@ from app.extraction.france_eligibility import (
 from app.extraction.prize_preference import assess_prize_preference
 from app.models.giveaway import GiveawayStatus
 from app.platforms.gleam import gleam_identity_from_url
+from app.platforms.sweepwidget import sweepwidget_identity_from_url
 from app.scraping.adapters import get_adapter
 from app.scraping.adapters.base import ChildCandidate, PageEnrichment, SourceAdapter
 from app.scraping.filters import normalize_follow_url, should_follow_url
@@ -206,7 +208,9 @@ class GiveawayDiscoverySpider(Spider):
             else None
         )
         if entry_url:
-            identity = gleam_identity_from_url(entry_url)
+            identity = gleam_identity_from_url(entry_url) or sweepwidget_identity_from_url(
+                entry_url
+            )
             if identity:
                 platform = platform or identity.get("platform")
                 platform_campaign_id = platform_campaign_id or identity.get(
@@ -251,6 +255,33 @@ class GiveawayDiscoverySpider(Spider):
             if eligibility_reason and eligibility_reason not in skip_reasons:
                 skip_reasons.append(eligibility_reason)
 
+        actions_for_gate: list[Any] = []
+        mand = meta.get("mandatory_actions")
+        opt = meta.get("optional_actions")
+        if isinstance(mand, list):
+            actions_for_gate.extend(mand)
+        if isinstance(opt, list):
+            actions_for_gate.extend(opt)
+        if not actions_for_gate:
+            for et in meta.get("mandatory_entry_types") or []:
+                actions_for_gate.append({"entry_type": et, "mandatory": True})
+            for et in meta.get("optional_entry_types") or []:
+                actions_for_gate.append({"entry_type": et, "mandatory": False})
+
+        entry_gate = assess_entry_acceptability(
+            title=title,
+            prize=prize,
+            body=excerpt,
+            entry_method=assessment.entry_method,
+            platform_actions=actions_for_gate or None,
+        )
+        if entry_gate.entry_acceptable is False:
+            status = GiveawayStatus.REJECTED
+            skip_analyze = True
+            reason = entry_gate.entry_rejection_reason or "requires public social-media action"
+            if reason not in skip_reasons:
+                skip_reasons.append(reason)
+
         return {
             "kind": "candidate",
             "url": page_url,
@@ -284,6 +315,9 @@ class GiveawayDiscoverySpider(Spider):
             "preference_reason": pref.preference_reason,
             "requires_travel": pref.requires_travel,
             "requires_additional_spend": pref.requires_additional_spend,
+            "requires_public_social_action": entry_gate.requires_public_social_action,
+            "entry_acceptable": entry_gate.entry_acceptable,
+            "entry_rejection_reason": entry_gate.entry_rejection_reason,
             "platform": platform,
             "platform_campaign_id": platform_campaign_id,
             "skip_analyze": skip_analyze,
@@ -502,12 +536,18 @@ def build_spider(
     limits: SpiderLimits,
     adapter_key: str | None = None,
     source_name: str = "",
+    extra_start_urls: list[str] | None = None,
 ) -> GiveawayDiscoverySpider:
     """Build a configured spider instance for one source."""
     short = str(source_id).split("-")[0]
+    starts = [start_url]
+    for extra in extra_start_urls or []:
+        u = str(extra).strip()
+        if u and u not in starts:
+            starts.append(u)
     attrs: dict[str, Any] = {
         "name": f"giveaway_{short}",
-        "start_urls": [start_url],
+        "start_urls": starts,
         "allowed_domains": {allowed_domain},
         "robots_txt_obey": False,
         "concurrent_requests": concurrent_requests,

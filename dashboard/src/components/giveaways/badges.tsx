@@ -1,5 +1,6 @@
 import { Badge } from "@/components/ui/badge";
 import type { GiveawayRow } from "@/lib/types";
+import { formatRelativeHours } from "@/lib/utils";
 
 function endingSoon(g: GiveawayRow): boolean {
   if (!g.end_at) return false;
@@ -23,6 +24,14 @@ export function GiveawayBadges({ giveaway }: { giveaway: GiveawayRow }) {
       {giveaway.free_entry ? <Badge variant="free">Free</Badge> : null}
       {giveaway.requires_purchase ? <Badge variant="purchase">Purchase</Badge> : null}
       {giveaway.requires_social ? <Badge variant="social">Social</Badge> : null}
+      {giveaway.requires_public_social_action || giveaway.entry_acceptable === false ? (
+        <Badge variant="danger">Public social action</Badge>
+      ) : null}
+      {giveaway.reminder_due ? (
+        <Badge variant="warn">Rappel dû · {formatRelativeHours(giveaway.remind_at)}</Badge>
+      ) : giveaway.remind_at ? (
+        <Badge variant="default">Rappel · {formatRelativeHours(giveaway.remind_at)}</Badge>
+      ) : null}
       {endingSoon(giveaway) && giveaway.status !== "expired" ? (
         <Badge variant="warn">Ending soon</Badge>
       ) : null}

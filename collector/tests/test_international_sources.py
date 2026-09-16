@@ -149,7 +149,8 @@ def test_the_prize_finder_rss_and_detail() -> None:
         _selector("the_prize_finder_detail.html"),
         page_url="https://www.theprizefinder.com/competitions/win-1-5-ps200-gift-cards-bm",
     )
-    assert detail.skip_as_candidate is False
+    # UK-only competitions are skipped by the France-first adapter.
+    assert detail.skip_as_candidate is True
     assert detail.entry_url is not None
     assert "link-track" in detail.entry_url
     assert detail.restriction_text is not None
