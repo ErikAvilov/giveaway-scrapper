@@ -1,0 +1,226 @@
+{
+  "sources": [
+    {
+      "name": "Concours du Net",
+      "base_url": "https://www.concours-du-net.com/",
+      "source_type": "giveaway_aggregator",
+      "enabled": true,
+      "crawl_interval_minutes": 180,
+      "crawl_config": {
+        "profile": "real",
+        "region": "france",
+        "target_regions": ["france", "eu", "worldwide"],
+        "adapter": "concours_du_net",
+        "max_pages": 10,
+        "max_depth": 1
+      }
+    },
+    {
+      "name": "Le Démon du Jeu",
+      "base_url": "https://www.ledemondujeu.com/",
+      "source_type": "giveaway_aggregator",
+      "enabled": true,
+      "crawl_interval_minutes": 180,
+      "crawl_config": {
+        "profile": "real",
+        "region": "france",
+        "target_regions": ["france", "eu", "worldwide"],
+        "adapter": "le_demon_du_jeu",
+        "max_pages": 10,
+        "max_depth": 1
+      }
+    },
+    {
+      "name": "Concours.fr",
+      "base_url": "https://www.concours.fr/",
+      "source_type": "giveaway_aggregator",
+      "enabled": true,
+      "crawl_interval_minutes": 180,
+      "crawl_config": {
+        "profile": "real",
+        "region": "france",
+        "target_regions": ["france", "eu", "worldwide"],
+        "adapter": "concours_fr",
+        "max_pages": 10,
+        "max_depth": 1
+      }
+    },
+    {
+      "name": "Mes Échantillons Gratuits",
+      "base_url": "https://www.mesechantillonsgratuits.fr/jeux-concours/",
+      "source_type": "giveaway_aggregator",
+      "enabled": true,
+      "crawl_interval_minutes": 180,
+      "crawl_config": {
+        "profile": "real",
+        "region": "france",
+        "target_regions": ["france", "eu", "worldwide"],
+        "adapter": "mes_echantillons_gratuits",
+        "max_pages": 10,
+        "max_depth": 1
+      }
+    },
+    {
+      "name": "ÉchantillonsClub",
+      "base_url": "https://www.echantillonsclub.com/concours",
+      "source_type": "giveaway_aggregator",
+      "enabled": true,
+      "crawl_interval_minutes": 180,
+      "crawl_config": {
+        "profile": "real",
+        "region": "france",
+        "target_regions": ["france", "eu", "worldwide"],
+        "adapter": "echantillonsclub",
+        "max_pages": 10,
+        "max_depth": 1,
+        "notes": "robots.txt disallows /url/* redirects; entry_url stored but not fetched"
+      }
+    },
+    {
+      "name": "Giveario US",
+      "base_url": "https://giveario.com/en/countries/united-states/",
+      "source_type": "giveaway_aggregator",
+      "enabled": false,
+      "crawl_interval_minutes": 180,
+      "crawl_config": {
+        "profile": "real",
+        "region": "international",
+        "target_regions": ["us"],
+        "adapter": "giveario",
+        "max_pages": 10,
+        "max_depth": 1,
+        "enabled_reason": "country_incompatible",
+        "notes": "US-country Giveario listing; disabled for France-first profile"
+      }
+    },
+    {
+      "name": "Giveario UK",
+      "base_url": "https://giveario.com/en/countries/united-kingdom/",
+      "source_type": "giveaway_aggregator",
+      "enabled": false,
+      "crawl_interval_minutes": 180,
+      "crawl_config": {
+        "profile": "real",
+        "region": "international",
+        "target_regions": ["uk"],
+        "adapter": "giveario",
+        "max_pages": 10,
+        "max_depth": 1,
+        "enabled_reason": "country_incompatible",
+        "notes": "UK-country Giveario listing; disabled for France-first profile"
+      }
+    },
+    {
+      "name": "ThePrizeFinder",
+      "base_url": "https://www.theprizefinder.com/rss.xml",
+      "source_type": "giveaway_aggregator",
+      "enabled": false,
+      "crawl_interval_minutes": 180,
+      "crawl_config": {
+        "profile": "real",
+        "region": "international",
+        "target_regions": ["uk"],
+        "adapter": "the_prize_finder",
+        "max_pages": 10,
+        "max_depth": 1,
+        "enabled_reason": "country_incompatible",
+        "notes": "UK-leaning competitions RSS; disabled for France-first profile"
+      }
+    },
+    {
+      "name": "OnlineCompetitions",
+      "base_url": "https://www.onlinecompetition.co.uk/",
+      "source_type": "giveaway_aggregator",
+      "enabled": false,
+      "crawl_interval_minutes": 180,
+      "crawl_config": {
+        "profile": "real",
+        "region": "international",
+        "target_regions": ["uk"],
+        "adapter": "online_competition",
+        "max_pages": 10,
+        "max_depth": 1,
+        "enabled_reason": "country_incompatible",
+        "notes": "UK competitions aggregator; disabled for France-first profile"
+      }
+    },
+    {
+      "name": "PrizeRunner",
+      "base_url": "https://prizerunner.co.uk/",
+      "source_type": "giveaway_aggregator",
+      "enabled": false,
+      "crawl_interval_minutes": 180,
+      "crawl_config": {
+        "profile": "real",
+        "region": "international",
+        "target_regions": ["uk"],
+        "adapter": "prize_runner",
+        "max_pages": 10,
+        "max_depth": 1,
+        "enabled_reason": "country_incompatible",
+        "notes": "UK competitions aggregator; disabled for France-first profile"
+      }
+    },
+    {
+      "name": "ContestGirl",
+      "base_url": "https://www.contestgirl.com/contests/contests.pl?f=s&c=us&b=nb&sort=p&ar=na&s=_",
+      "source_type": "giveaway_aggregator",
+      "enabled": false,
+      "crawl_interval_minutes": 180,
+      "crawl_config": {
+        "profile": "real",
+        "region": "international",
+        "target_regions": ["us"],
+        "adapter": "contestgirl",
+        "max_pages": 10,
+        "max_depth": 1,
+        "enabled_reason": "country_incompatible",
+        "notes": "US sweepstakes listing; disabled for France-first profile"
+      }
+    },
+    {
+      "name": "Gleam.io",
+      "base_url": "https://gleam.io/",
+      "source_type": "other",
+      "enabled": true,
+      "crawl_interval_minutes": 1440,
+      "crawl_config": {
+        "profile": "real",
+        "region": "international",
+        "target_regions": ["worldwide", "france", "eu"],
+        "adapter": "gleam",
+        "max_pages": 5,
+        "max_depth": 1,
+        "notes": "Platform parser (not aggregator). Campaign URLs gleam.io/<id>/... are HTTP-parseable; marketing homepage often 403. Main discovery via aggregator entry_urls + direct campaign seeds."
+      }
+    },
+    {
+      "name": "GiveawayListing",
+      "base_url": "https://giveawaylisting.com/international-giveaway-list/",
+      "source_type": "giveaway_aggregator",
+      "enabled": false,
+      "crawl_interval_minutes": 180,
+      "crawl_config": {
+        "profile": "real",
+        "region": "international",
+        "adapter": null,
+        "enabled_reason": "unsupported",
+        "notes": "Listings live in Google Sheets iframe; pubhtml returns 401; page HTML has no extractable giveaways without JS/Sheets auth"
+      }
+    },
+    {
+      "name": "FelixCompetitions",
+      "base_url": "https://felixcompetitions.uk/",
+      "source_type": "giveaway_aggregator",
+      "enabled": false,
+      "crawl_interval_minutes": 180,
+      "crawl_config": {
+        "profile": "real",
+        "region": "international",
+        "adapter": null,
+        "enabled_reason": "unsupported",
+        "notes": "Persistent Cloudflare 403 on homepage and robots.txt; HTTP crawler blocked"
+      }
+    }
+  ]
+}

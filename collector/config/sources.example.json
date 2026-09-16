@@ -1,0 +1,28 @@
+{
+  "sources": [
+    {
+      "name": "Example.org (smoke test)",
+      "base_url": "https://example.com/",
+      "source_type": "other",
+      "enabled": true,
+      "crawl_interval_minutes": 1440,
+      "crawl_config": {
+        "profile": "example",
+        "max_pages": 5,
+        "max_depth": 1
+      }
+    },
+    {
+      "name": "Books to Scrape (depth/link demo)",
+      "base_url": "https://books.toscrape.com/",
+      "source_type": "other",
+      "enabled": false,
+      "crawl_interval_minutes": 1440,
+      "crawl_config": {
+        "profile": "example",
+        "max_pages": 15,
+        "max_depth": 2
+      }
+    }
+  ]
+}

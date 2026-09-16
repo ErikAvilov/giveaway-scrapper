@@ -1,0 +1,38 @@
+# Raspberry Pi 5 (ARM64) / amd64 — continuous collector worker.
+# Neon is the only persistent store; no local volumes required.
+services:
+  collector:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: giveaway-collector:local
+    container_name: giveaway-collector
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      HOME: /tmp
+      XDG_CACHE_HOME: /tmp/cache
+      WORKER_IDLE_SLEEP_SECONDS: ${WORKER_IDLE_SLEEP_SECONDS:-60}
+      WORKER_ERROR_SLEEP_SECONDS: ${WORKER_ERROR_SLEEP_SECONDS:-30}
+      WORKER_ANALYZE_LIMIT: ${WORKER_ANALYZE_LIMIT:-25}
+      WORKER_HEARTBEAT_PATH: /tmp/collector_heartbeat
+      # Keep Pi crawl concurrency conservative inside the container.
+      CRAWL_CONCURRENT_REQUESTS: ${CRAWL_CONCURRENT_REQUESTS:-2}
+      CRAWL_CONCURRENT_REQUESTS_PER_DOMAIN: ${CRAWL_CONCURRENT_REQUESTS_PER_DOMAIN:-1}
+    # No published ports — worker only talks to Neon + Gemini outbound.
+    mem_limit: 768m
+    memswap_limit: 768m
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.cli", "health", "--max-heartbeat-age", "600"]
+      interval: 60s
+      timeout: 15s
+      retries: 3
+      start_period: 90s
