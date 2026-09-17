@@ -226,3 +226,74 @@ def _trim(text: str | None, limit: int = 800) -> str:
     if len(raw) <= limit:
         return raw
     return raw[-limit:]
+
+
+def parse_bot_summary(stdout: str) -> dict[str, Any] | None:
+    """Public wrapper — last JSON summary line from bot stdout."""
+    return _parse_bot_summary(stdout)
+
+
+def mark_entered_from_bot_summary(
+    conn: Connection,
+    summary: dict[str, Any] | str,
+) -> dict[str, Any]:
+    """
+    Set manual_status=entered for Gleam rows matching bot ``ok`` campaign keys.
+
+    ``summary`` is either the parsed JSON dict from run_urls --json-summary,
+    or raw stdout containing that JSON line.
+    """
+    if isinstance(summary, str):
+        parsed = _parse_bot_summary(summary)
+        if parsed is None:
+            return {"marked": 0, "keys": [], "missing": [], "error": "no bot JSON summary"}
+        summary = parsed
+
+    ok_items = list(summary.get("ok") or [])
+    keys: list[str] = []
+    for item in ok_items:
+        key = str(item.get("id") or "").strip()
+        if not key:
+            url = str(item.get("url") or "")
+            # gleam.io/<key>/...
+            parts = url.split("gleam.io/")
+            if len(parts) > 1:
+                key = parts[1].split("/")[0].split("?")[0].strip()
+        if key:
+            keys.append(key)
+
+    # De-dupe preserving order
+    seen: set[str] = set()
+    uniq_keys: list[str] = []
+    for k in keys:
+        kl = k.lower()
+        if kl in seen:
+            continue
+        seen.add(kl)
+        uniq_keys.append(k)
+
+    if not uniq_keys:
+        return {"marked": 0, "keys": [], "missing": [], "error": None}
+
+    repo = GiveawayRepository(conn)
+    marked = 0
+    missing: list[str] = []
+    for key in uniq_keys:
+        row = conn.execute(
+            """
+            SELECT id FROM giveaways
+            WHERE platform = 'gleam'
+              AND lower(platform_campaign_id) = lower(%s)
+            LIMIT 1
+            """,
+            (key,),
+        ).fetchone()
+        if row is None:
+            missing.append(key)
+            continue
+        gid = row["id"] if isinstance(row, dict) else row[0]
+        repo.update_manual_status(gid, ManualStatus.ENTERED)
+        marked += 1
+        logger.info("Marked entered platform_campaign_id=%s id=%s", key, gid)
+
+    return {"marked": marked, "keys": uniq_keys, "missing": missing, "error": None}

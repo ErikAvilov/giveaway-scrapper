@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-from app.gleam_enter.service import _job_matched, _parse_bot_summary
+from app.gleam_enter.service import _job_matched, _parse_bot_summary, parse_bot_summary
 from app.gleam_enter.urls import gleam_entry_url
 from app.models.giveaway import Giveaway, GiveawayStatus, ManualStatus
 
@@ -40,12 +40,12 @@ def test_gleam_entry_url_directory_shell() -> None:
     assert gleam_entry_url(g) == "https://gleam.io/gB6Mc/x"
 
 
-def test_parse_bot_summary_last_json() -> None:
-    stdout = "noise\n{\"attempted\": 1, \"ok\": [{\"id\": \"gB6Mc\"}], \"failed\": []}\n"
-    data = _parse_bot_summary(stdout)
+def test_parse_bot_summary_public_alias() -> None:
+    stdout = '{"attempted": 2, "ok": [{"id": "AbCd"}], "failed": [{"id": "x", "reason": "ended"}]}'
+    data = parse_bot_summary(stdout)
     assert data is not None
-    assert data["attempted"] == 1
-    assert data["ok"][0]["id"] == "gB6Mc"
+    assert len(data["ok"]) == 1
+    assert data["failed"][0]["reason"] == "ended"
 
 
 def test_job_matched_by_campaign_id() -> None:

@@ -867,6 +867,61 @@ def enter_gleam_cmd(
         raise SystemExit(2)
 
 
+@main.command("mark-gleam-entered")
+@click.option(
+    "--summary-file",
+    type=click.Path(exists=True, dir_okay=False, path_type=str),
+    default=None,
+    help="JSON summary file or bot stdout capture containing the ok/failed line.",
+)
+@click.option(
+    "--stdin",
+    "from_stdin",
+    is_flag=True,
+    default=False,
+    help="Read bot stdout / JSON summary from stdin.",
+)
+@click.option(
+    "--key",
+    "keys",
+    multiple=True,
+    help="Gleam campaign key(s) to mark entered (repeatable).",
+)
+def mark_gleam_entered_cmd(
+    summary_file: str | None,
+    from_stdin: bool,
+    keys: tuple[str, ...],
+) -> None:
+    """Mark Neon giveaways as entered after a successful desktop bot run."""
+    from app.gleam_enter import mark_entered_from_bot_summary
+
+    settings = get_settings()
+    summary: dict | str | None = None
+    if keys:
+        summary = {"ok": [{"id": k} for k in keys], "failed": []}
+    elif from_stdin:
+        summary = sys.stdin.read()
+    elif summary_file:
+        from pathlib import Path
+
+        summary = Path(summary_file).read_text(encoding="utf-8")
+    else:
+        raise click.UsageError("Provide --summary-file, --stdin, or --key")
+
+    with connection(settings) as conn:
+        apply_migrations(conn)
+        result = mark_entered_from_bot_summary(conn, summary)
+        conn.commit()
+
+    click.echo(
+        f"marked_entered={result['marked']} "
+        f"keys={result['keys']} missing={result['missing']}"
+    )
+    if result.get("error"):
+        click.echo(f"error={result['error']}")
+        raise SystemExit(1)
+
+
 @main.command("reset-crawl-schedule")
 def reset_crawl_schedule_cmd() -> None:
     """Make all enabled sources due for crawl immediately."""
