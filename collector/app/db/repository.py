@@ -22,7 +22,19 @@ from app.urls import canonicalize_url, domain_from_url
 logger = logging.getLogger(__name__)
 
 
+def _is_strong_entry_identity(entry_url: str) -> bool:
+    """Only treat known platform entry hosts as strong cross-source identity."""
+    try:
+        host = domain_from_url(canonicalize_url(entry_url)).lower()
+    except ValueError:
+        return False
+    return host in {"gleam.io", "sweepwidget.com"} or host.endswith(
+        (".gleam.io", ".sweepwidget.com")
+    )
+
+
 def _utcnow() -> datetime:
+
     return datetime.now(UTC)
 
 
@@ -98,6 +110,7 @@ def _row_to_giveaway(row: dict[str, Any]) -> Giveaway:
         link_hints=_as_str_list(row.get("link_hints")),
         analysis_json=analysis,
         manual_status=ManualStatus(row["manual_status"]),
+        manual_status_updated_at=row.get("manual_status_updated_at"),
         remind_at=row.get("remind_at"),
         reminder_hours=row.get("reminder_hours"),
         requires_public_social_action=row.get("requires_public_social_action"),
@@ -390,6 +403,59 @@ class GiveawayRepository:
         ).fetchone()
         return _row_to_giveaway(row) if row else None
 
+    def get_by_entry_url(self, entry_url: str) -> Giveaway | None:
+        """Lookup by normalized entry URL (strong identity hosts only at call site)."""
+        try:
+            normalized = canonicalize_url(entry_url)
+        except ValueError:
+            normalized = entry_url.strip()
+        row = self._conn.execute(
+            """
+            SELECT * FROM giveaways
+            WHERE entry_url = %s OR entry_url = %s
+            ORDER BY analyzed_at DESC NULLS LAST, last_seen_at DESC NULLS LAST
+            LIMIT 1
+            """,
+            (entry_url.strip(), normalized),
+        ).fetchone()
+        return _row_to_giveaway(row) if row else None
+
+    def record_giveaway_source(
+        self,
+        giveaway_id: UUID,
+        source_id: UUID,
+        *,
+        source_url: str | None = None,
+        seen_at: datetime | None = None,
+    ) -> None:
+        """Attach or refresh multi-source provenance (additive)."""
+        at = seen_at or _utcnow()
+        self._conn.execute(
+            """
+            INSERT INTO giveaway_sources (
+                giveaway_id, source_id, source_url, first_seen_at, last_seen_at
+            )
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (giveaway_id, source_id) DO UPDATE SET
+                last_seen_at = EXCLUDED.last_seen_at,
+                source_url = COALESCE(EXCLUDED.source_url, giveaway_sources.source_url)
+            """,
+            (giveaway_id, source_id, source_url, at, at),
+        )
+
+    def list_giveaway_sources(self, giveaway_id: UUID) -> list[dict[str, object]]:
+        rows = self._conn.execute(
+            """
+            SELECT gs.*, s.name AS source_name
+            FROM giveaway_sources gs
+            LEFT JOIN sources s ON s.id = gs.source_id
+            WHERE gs.giveaway_id = %s
+            ORDER BY gs.first_seen_at ASC
+            """,
+            (giveaway_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     def list_needing_analysis(self, *, limit: int = 100) -> list[Giveaway]:
         """Giveaways that have never been analyzed or whose content changed."""
         return self.list_for_analysis(limit=limit, include_analyzed=False)
@@ -409,6 +475,9 @@ class GiveawayRepository:
         if not include_analyzed:
             clauses.append("analyzed_at IS NULL")
             clauses.append("status = 'candidate'")
+            clauses.append(
+                "manual_status NOT IN ('entered', 'ignored', 'won', 'lost')"
+            )
         if excluded:
             clauses.append("id <> ALL(%s::uuid[])")
             params.append(excluded)
@@ -444,6 +513,9 @@ class GiveawayRepository:
         if not include_analyzed:
             clauses.append("analyzed_at IS NULL")
             clauses.append("status = 'candidate'")
+            clauses.append(
+                "manual_status NOT IN ('entered', 'ignored', 'won', 'lost')"
+            )
         if excluded:
             clauses.append("id <> ALL(%s::uuid[])")
             params.append(excluded)
@@ -511,14 +583,15 @@ class GiveawayRepository:
         seen_at: datetime | None = None,
     ) -> GiveawayUpsertResult:
         """
-        Insert or update a giveaway keyed by canonical_url.
+        Insert or update a giveaway keyed by canonical_url (long-term memory).
 
         - Always refreshes last_seen_at.
-        - When content_hash is unchanged: leave analysis fields alone.
-        - When content_hash changes: refresh crawl text fields, reset status to
-          candidate, and clear analyzed_at / analysis_json / confidence so Gemini
-          can re-run later (avoids stale "active" rows).
-        - Never overwrites manual_status on conflict.
+        - Soft-dedups via platform_campaign_id then strong entry_url.
+        - Never clears analyzed_at / analysis_json on content_hash change.
+        - Never overwrites manual_status.
+        - Never overwrites confirmed analysis fields with NULL / weaker crawl data
+          once analyzed_at is set.
+        - Records multi-source provenance in giveaway_sources when source_id set.
         """
         canonical = canonicalize_url(url)
         domain = domain_from_url(canonical)
@@ -531,6 +604,13 @@ class GiveawayRepository:
             if by_platform is not None:
                 existing = by_platform
                 canonical = str(by_platform.canonical_url)
+                domain = domain_from_url(canonical)
+        # Strong entry_url identity (platform hosts only — avoid false merges).
+        if existing is None and entry_url and _is_strong_entry_identity(entry_url):
+            by_entry = self.get_by_entry_url(entry_url)
+            if by_entry is not None:
+                existing = by_entry
+                canonical = str(by_entry.canonical_url)
                 domain = domain_from_url(canonical)
         created = existing is None
         hash_changed = created or existing.content_hash != hash_value
@@ -585,151 +665,169 @@ class GiveawayRepository:
             )
             ON CONFLICT (canonical_url) DO UPDATE SET
                 original_url = EXCLUDED.original_url,
-                source_id = COALESCE(EXCLUDED.source_id, giveaways.source_id),
+                -- Keep earliest primary source; multi-source goes to giveaway_sources.
+                source_id = COALESCE(giveaways.source_id, EXCLUDED.source_id),
                 last_seen_at = EXCLUDED.last_seen_at,
                 updated_at = now(),
+                content_hash = EXCLUDED.content_hash,
+                -- Refresh crawl text only when content actually changed (or fill NULLs).
                 title = CASE
+                    WHEN giveaways.title IS NULL THEN EXCLUDED.title
                     WHEN giveaways.content_hash IS DISTINCT FROM EXCLUDED.content_hash
-                    THEN EXCLUDED.title ELSE giveaways.title
+                    THEN COALESCE(EXCLUDED.title, giveaways.title)
+                    ELSE giveaways.title
                 END,
                 description = CASE
+                    WHEN giveaways.description IS NULL THEN EXCLUDED.description
                     WHEN giveaways.content_hash IS DISTINCT FROM EXCLUDED.content_hash
-                    THEN EXCLUDED.description ELSE giveaways.description
-                END,
-                prize = CASE
-                    WHEN giveaways.content_hash IS DISTINCT FROM EXCLUDED.content_hash
-                    THEN EXCLUDED.prize ELSE giveaways.prize
-                END,
-                prize_value_eur = CASE
-                    WHEN giveaways.content_hash IS DISTINCT FROM EXCLUDED.content_hash
-                    THEN EXCLUDED.prize_value_eur ELSE giveaways.prize_value_eur
-                END,
-                prize_category = CASE
-                    WHEN giveaways.content_hash IS DISTINCT FROM EXCLUDED.content_hash
-                    THEN EXCLUDED.prize_category ELSE giveaways.prize_category
-                END,
-                wanted_prize = CASE
-                    WHEN giveaways.content_hash IS DISTINCT FROM EXCLUDED.content_hash
-                    THEN EXCLUDED.wanted_prize ELSE giveaways.wanted_prize
-                END,
-                prize_priority = CASE
-                    WHEN giveaways.content_hash IS DISTINCT FROM EXCLUDED.content_hash
-                    THEN EXCLUDED.prize_priority ELSE giveaways.prize_priority
-                END,
-                preference_reason = CASE
-                    WHEN giveaways.content_hash IS DISTINCT FROM EXCLUDED.content_hash
-                    THEN EXCLUDED.preference_reason ELSE giveaways.preference_reason
-                END,
-                requires_travel = CASE
-                    WHEN giveaways.content_hash IS DISTINCT FROM EXCLUDED.content_hash
-                    THEN EXCLUDED.requires_travel ELSE giveaways.requires_travel
-                END,
-                requires_additional_spend = CASE
-                    WHEN giveaways.content_hash IS DISTINCT FROM EXCLUDED.content_hash
-                    THEN EXCLUDED.requires_additional_spend
-                    ELSE giveaways.requires_additional_spend
-                END,
-                free_entry = CASE
-                    WHEN giveaways.content_hash IS DISTINCT FROM EXCLUDED.content_hash
-                    THEN EXCLUDED.free_entry ELSE giveaways.free_entry
-                END,
-                eligible_france = CASE
-                    WHEN giveaways.content_hash IS DISTINCT FROM EXCLUDED.content_hash
-                    THEN EXCLUDED.eligible_france ELSE giveaways.eligible_france
-                END,
-                france_eligibility = CASE
-                    WHEN giveaways.content_hash IS DISTINCT FROM EXCLUDED.content_hash
-                    THEN EXCLUDED.france_eligibility ELSE giveaways.france_eligibility
-                END,
-                eligibility_reason = CASE
-                    WHEN giveaways.content_hash IS DISTINCT FROM EXCLUDED.content_hash
-                    THEN EXCLUDED.eligibility_reason ELSE giveaways.eligibility_reason
-                END,
-                requires_purchase = CASE
-                    WHEN giveaways.content_hash IS DISTINCT FROM EXCLUDED.content_hash
-                    THEN EXCLUDED.requires_purchase ELSE giveaways.requires_purchase
-                END,
-                requires_social = CASE
-                    WHEN giveaways.content_hash IS DISTINCT FROM EXCLUDED.content_hash
-                    THEN EXCLUDED.requires_social ELSE giveaways.requires_social
-                END,
-                entry_method = CASE
-                    WHEN giveaways.content_hash IS DISTINCT FROM EXCLUDED.content_hash
-                    THEN EXCLUDED.entry_method ELSE giveaways.entry_method
-                END,
-                entry_friction = CASE
-                    WHEN giveaways.content_hash IS DISTINCT FROM EXCLUDED.content_hash
-                    THEN EXCLUDED.entry_friction ELSE giveaways.entry_friction
-                END,
-                geo_restriction = CASE
-                    WHEN giveaways.content_hash IS DISTINCT FROM EXCLUDED.content_hash
-                    THEN EXCLUDED.geo_restriction ELSE giveaways.geo_restriction
-                END,
-                platform = CASE
-                    WHEN giveaways.content_hash IS DISTINCT FROM EXCLUDED.content_hash
-                    THEN COALESCE(EXCLUDED.platform, giveaways.platform)
-                    ELSE COALESCE(giveaways.platform, EXCLUDED.platform)
-                END,
-                platform_campaign_id = CASE
-                    WHEN giveaways.content_hash IS DISTINCT FROM EXCLUDED.content_hash
-                    THEN COALESCE(EXCLUDED.platform_campaign_id, giveaways.platform_campaign_id)
-                    ELSE COALESCE(giveaways.platform_campaign_id, EXCLUDED.platform_campaign_id)
-                END,
-                requires_public_social_action = CASE
-                    WHEN giveaways.content_hash IS DISTINCT FROM EXCLUDED.content_hash
-                    THEN EXCLUDED.requires_public_social_action
-                    ELSE giveaways.requires_public_social_action
-                END,
-                entry_acceptable = CASE
-                    WHEN giveaways.content_hash IS DISTINCT FROM EXCLUDED.content_hash
-                    THEN EXCLUDED.entry_acceptable ELSE giveaways.entry_acceptable
-                END,
-                entry_rejection_reason = CASE
-                    WHEN giveaways.content_hash IS DISTINCT FROM EXCLUDED.content_hash
-                    THEN EXCLUDED.entry_rejection_reason
-                    ELSE giveaways.entry_rejection_reason
-                END,
-                start_at = CASE
-                    WHEN giveaways.content_hash IS DISTINCT FROM EXCLUDED.content_hash
-                    THEN EXCLUDED.start_at ELSE giveaways.start_at
-                END,
-                end_at = CASE
-                    WHEN giveaways.content_hash IS DISTINCT FROM EXCLUDED.content_hash
-                    THEN EXCLUDED.end_at ELSE giveaways.end_at
-                END,
-                terms_url = CASE
-                    WHEN giveaways.content_hash IS DISTINCT FROM EXCLUDED.content_hash
-                    THEN EXCLUDED.terms_url ELSE giveaways.terms_url
-                END,
-                entry_url = CASE
-                    WHEN giveaways.content_hash IS DISTINCT FROM EXCLUDED.content_hash
-                    THEN EXCLUDED.entry_url ELSE giveaways.entry_url
+                    THEN COALESCE(EXCLUDED.description, giveaways.description)
+                    ELSE giveaways.description
                 END,
                 raw_excerpt = CASE
+                    WHEN giveaways.raw_excerpt IS NULL THEN EXCLUDED.raw_excerpt
                     WHEN giveaways.content_hash IS DISTINCT FROM EXCLUDED.content_hash
-                    THEN EXCLUDED.raw_excerpt ELSE giveaways.raw_excerpt
+                    THEN COALESCE(EXCLUDED.raw_excerpt, giveaways.raw_excerpt)
+                    ELSE giveaways.raw_excerpt
                 END,
                 link_hints = CASE
                     WHEN giveaways.content_hash IS DISTINCT FROM EXCLUDED.content_hash
-                    THEN EXCLUDED.link_hints ELSE giveaways.link_hints
+                         AND EXCLUDED.link_hints IS NOT NULL
+                         AND jsonb_array_length(EXCLUDED.link_hints) > 0
+                    THEN EXCLUDED.link_hints
+                    ELSE giveaways.link_hints
                 END,
+                entry_url = COALESCE(EXCLUDED.entry_url, giveaways.entry_url),
+                terms_url = COALESCE(EXCLUDED.terms_url, giveaways.terms_url),
+                platform = COALESCE(giveaways.platform, EXCLUDED.platform),
+                platform_campaign_id = COALESCE(
+                    giveaways.platform_campaign_id, EXCLUDED.platform_campaign_id
+                ),
+                -- Once Gemini-analyzed: preserve analysis-derived fields.
+                -- Otherwise: never overwrite confirmed values with NULL.
+                prize = CASE
+                    WHEN giveaways.analyzed_at IS NOT NULL
+                    THEN COALESCE(giveaways.prize, EXCLUDED.prize)
+                    ELSE COALESCE(EXCLUDED.prize, giveaways.prize)
+                END,
+                prize_value_eur = CASE
+                    WHEN giveaways.analyzed_at IS NOT NULL
+                    THEN COALESCE(giveaways.prize_value_eur, EXCLUDED.prize_value_eur)
+                    ELSE COALESCE(EXCLUDED.prize_value_eur, giveaways.prize_value_eur)
+                END,
+                prize_category = CASE
+                    WHEN giveaways.analyzed_at IS NOT NULL
+                    THEN COALESCE(giveaways.prize_category, EXCLUDED.prize_category)
+                    ELSE COALESCE(EXCLUDED.prize_category, giveaways.prize_category)
+                END,
+                wanted_prize = CASE
+                    WHEN giveaways.analyzed_at IS NOT NULL
+                    THEN giveaways.wanted_prize
+                    ELSE COALESCE(EXCLUDED.wanted_prize, giveaways.wanted_prize)
+                END,
+                prize_priority = CASE
+                    WHEN giveaways.analyzed_at IS NOT NULL
+                    THEN COALESCE(giveaways.prize_priority, EXCLUDED.prize_priority)
+                    ELSE COALESCE(EXCLUDED.prize_priority, giveaways.prize_priority)
+                END,
+                preference_reason = CASE
+                    WHEN giveaways.analyzed_at IS NOT NULL
+                    THEN COALESCE(giveaways.preference_reason, EXCLUDED.preference_reason)
+                    ELSE COALESCE(EXCLUDED.preference_reason, giveaways.preference_reason)
+                END,
+                requires_travel = CASE
+                    WHEN giveaways.analyzed_at IS NOT NULL
+                    THEN COALESCE(giveaways.requires_travel, EXCLUDED.requires_travel)
+                    ELSE COALESCE(EXCLUDED.requires_travel, giveaways.requires_travel)
+                END,
+                requires_additional_spend = CASE
+                    WHEN giveaways.analyzed_at IS NOT NULL
+                    THEN COALESCE(
+                        giveaways.requires_additional_spend,
+                        EXCLUDED.requires_additional_spend
+                    )
+                    ELSE COALESCE(
+                        EXCLUDED.requires_additional_spend,
+                        giveaways.requires_additional_spend
+                    )
+                END,
+                free_entry = CASE
+                    WHEN giveaways.analyzed_at IS NOT NULL
+                    THEN COALESCE(giveaways.free_entry, EXCLUDED.free_entry)
+                    ELSE COALESCE(EXCLUDED.free_entry, giveaways.free_entry)
+                END,
+                eligible_france = CASE
+                    WHEN giveaways.analyzed_at IS NOT NULL
+                    THEN giveaways.eligible_france
+                    ELSE COALESCE(EXCLUDED.eligible_france, giveaways.eligible_france)
+                END,
+                france_eligibility = CASE
+                    WHEN giveaways.analyzed_at IS NOT NULL
+                    THEN giveaways.france_eligibility
+                    ELSE COALESCE(EXCLUDED.france_eligibility, giveaways.france_eligibility)
+                END,
+                eligibility_reason = CASE
+                    WHEN giveaways.analyzed_at IS NOT NULL
+                    THEN COALESCE(giveaways.eligibility_reason, EXCLUDED.eligibility_reason)
+                    ELSE COALESCE(EXCLUDED.eligibility_reason, giveaways.eligibility_reason)
+                END,
+                requires_purchase = CASE
+                    WHEN giveaways.analyzed_at IS NOT NULL
+                    THEN COALESCE(giveaways.requires_purchase, EXCLUDED.requires_purchase)
+                    ELSE COALESCE(EXCLUDED.requires_purchase, giveaways.requires_purchase)
+                END,
+                requires_social = CASE
+                    WHEN giveaways.analyzed_at IS NOT NULL
+                    THEN COALESCE(giveaways.requires_social, EXCLUDED.requires_social)
+                    ELSE COALESCE(EXCLUDED.requires_social, giveaways.requires_social)
+                END,
+                entry_method = CASE
+                    WHEN giveaways.analyzed_at IS NOT NULL
+                    THEN COALESCE(giveaways.entry_method, EXCLUDED.entry_method)
+                    ELSE COALESCE(EXCLUDED.entry_method, giveaways.entry_method)
+                END,
+                entry_friction = CASE
+                    WHEN giveaways.analyzed_at IS NOT NULL
+                    THEN COALESCE(giveaways.entry_friction, EXCLUDED.entry_friction)
+                    ELSE COALESCE(EXCLUDED.entry_friction, giveaways.entry_friction)
+                END,
+                geo_restriction = CASE
+                    WHEN giveaways.analyzed_at IS NOT NULL
+                    THEN COALESCE(giveaways.geo_restriction, EXCLUDED.geo_restriction)
+                    ELSE COALESCE(EXCLUDED.geo_restriction, giveaways.geo_restriction)
+                END,
+                requires_public_social_action = CASE
+                    WHEN giveaways.analyzed_at IS NOT NULL
+                    THEN giveaways.requires_public_social_action
+                    ELSE COALESCE(
+                        EXCLUDED.requires_public_social_action,
+                        giveaways.requires_public_social_action
+                    )
+                END,
+                entry_acceptable = CASE
+                    WHEN giveaways.analyzed_at IS NOT NULL
+                    THEN giveaways.entry_acceptable
+                    ELSE COALESCE(EXCLUDED.entry_acceptable, giveaways.entry_acceptable)
+                END,
+                entry_rejection_reason = CASE
+                    WHEN giveaways.analyzed_at IS NOT NULL
+                    THEN giveaways.entry_rejection_reason
+                    ELSE COALESCE(
+                        EXCLUDED.entry_rejection_reason,
+                        giveaways.entry_rejection_reason
+                    )
+                END,
+                start_at = COALESCE(EXCLUDED.start_at, giveaways.start_at),
+                end_at = COALESCE(EXCLUDED.end_at, giveaways.end_at),
+                -- Preserve status once analyzed; allow local reject/expiry for pending.
                 status = CASE
-                    WHEN giveaways.content_hash IS DISTINCT FROM EXCLUDED.content_hash
-                    THEN EXCLUDED.status ELSE giveaways.status
+                    WHEN giveaways.analyzed_at IS NOT NULL THEN giveaways.status
+                    WHEN EXCLUDED.status IN ('rejected', 'expired') THEN EXCLUDED.status
+                    ELSE giveaways.status
                 END,
-                content_hash = EXCLUDED.content_hash,
-                analyzed_at = CASE
-                    WHEN giveaways.content_hash IS DISTINCT FROM EXCLUDED.content_hash
-                    THEN NULL ELSE giveaways.analyzed_at
-                END,
-                analysis_json = CASE
-                    WHEN giveaways.content_hash IS DISTINCT FROM EXCLUDED.content_hash
-                    THEN NULL ELSE giveaways.analysis_json
-                END,
-                confidence = CASE
-                    WHEN giveaways.content_hash IS DISTINCT FROM EXCLUDED.content_hash
-                    THEN NULL ELSE giveaways.confidence
-                END
+                -- Long-term memory: never auto-clear Gemini results on rediscovery.
+                analyzed_at = giveaways.analyzed_at,
+                analysis_json = giveaways.analysis_json,
+                confidence = giveaways.confidence
             RETURNING *
             """,
             (
@@ -775,6 +873,17 @@ class GiveawayRepository:
         ).fetchone()
         assert row is not None
         giveaway = _row_to_giveaway(row)
+        if source_id is not None and giveaway.id is not None:
+            self.record_giveaway_source(
+                giveaway.id,
+                source_id,
+                source_url=url.strip(),
+                seen_at=at,
+            )
+            # Reload so callers see unchanged fields after provenance write.
+            refreshed = self.get_by_id(giveaway.id)
+            if refreshed is not None:
+                giveaway = refreshed
         logger.debug(
             "giveaway upsert canonical_url=%s created=%s content_hash_changed=%s",
             canonical,
@@ -1078,6 +1187,94 @@ class GiveawayRepository:
             (limit,),
         ).fetchall()
         return [_row_to_giveaway(r) for r in rows]
+
+    def list_for_entry_rules_reevaluation(self, *, limit: int = 500) -> list[Giveaway]:
+        """Rows previously rejected under the public-social entry gate."""
+        rows = self._conn.execute(
+            """
+            SELECT * FROM giveaways
+            WHERE entry_acceptable IS FALSE
+              AND (
+                requires_public_social_action IS TRUE
+                OR entry_rejection_reason ILIKE %s
+                OR entry_rejection_reason ILIKE %s
+              )
+            ORDER BY updated_at DESC NULLS LAST, discovered_at DESC
+            LIMIT %s
+            """,
+            ("%public social%", "%social-media%", limit),
+        ).fetchall()
+        return [_row_to_giveaway(r) for r in rows]
+
+    def list_for_gleam_enter(
+        self,
+        *,
+        limit: int = 20,
+        manual_statuses: list[str] | None = None,
+        require_france_eligible: bool = False,
+        require_entry_acceptable: bool = True,
+        only_ids: list[UUID] | None = None,
+    ) -> list[Giveaway]:
+        """Queue Gleam campaigns for the desktop Selenium enter bot."""
+        statuses = manual_statuses or ["interested", "none"]
+        clauses = [
+            "platform = 'gleam'",
+            "manual_status = ANY(%s)",
+            "(entry_url IS NOT NULL OR platform_campaign_id IS NOT NULL)",
+            "(entry_url_status IS NULL OR entry_url_status <> 'gone')",
+            "status NOT IN ('expired', 'rejected')",
+        ]
+        params: list[Any] = [statuses]
+        if require_entry_acceptable:
+            clauses.append("(entry_acceptable IS NULL OR entry_acceptable IS TRUE)")
+        if require_france_eligible:
+            clauses.append(
+                "(france_eligibility = 'eligible' OR eligible_france IS TRUE)"
+            )
+        if only_ids:
+            clauses.append("id = ANY(%s)")
+            params.append(only_ids)
+        params.append(limit)
+        rows = self._conn.execute(
+            f"""
+            SELECT * FROM giveaways
+            WHERE {' AND '.join(clauses)}
+            ORDER BY
+              CASE manual_status WHEN 'interested' THEN 0 ELSE 1 END,
+              COALESCE(prize_priority, 0) DESC,
+              last_seen_at DESC NULLS LAST,
+              discovered_at DESC NULLS LAST
+            LIMIT %s
+            """,
+            params,
+        ).fetchall()
+        return [_row_to_giveaway(r) for r in rows]
+
+    def update_manual_status(
+        self,
+        giveaway_id: UUID,
+        manual_status: ManualStatus | str,
+    ) -> Giveaway:
+        """Set manual_status (dashboard parity — used by Gleam enter bot)."""
+        status = (
+            manual_status
+            if isinstance(manual_status, ManualStatus)
+            else ManualStatus(str(manual_status))
+        )
+        row = self._conn.execute(
+            """
+            UPDATE giveaways SET
+                manual_status = %s,
+                manual_status_updated_at = now(),
+                updated_at = now()
+            WHERE id = %s
+            RETURNING *
+            """,
+            (status.value, giveaway_id),
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"Giveaway not found: {giveaway_id}")
+        return _row_to_giveaway(row)
 
     def delete_by_canonical_url(self, canonical_url: str) -> bool:
         """Delete a giveaway (used by tests / admin cleanup)."""

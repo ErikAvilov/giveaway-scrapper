@@ -8,8 +8,9 @@ from app.config import Settings
 from app.scraping.spider import SpiderLimits
 
 # Hard caps for `crawl --real-test` (intentional, not production defaults).
+# Depth 2 is required for Gleam directory: listing → /giveaways/<id> → classic.
 REAL_TEST_MAX_PAGES = 10
-REAL_TEST_MAX_DEPTH = 1
+REAL_TEST_MAX_DEPTH = 2
 REAL_TEST_CONCURRENT_REQUESTS = 2
 REAL_TEST_CONCURRENT_REQUESTS_PER_DOMAIN = 1
 
@@ -36,4 +37,5 @@ def apply_real_test_limits(limits: SpiderLimits, _settings: Settings) -> SpiderL
         excerpt_max_chars=limits.excerpt_max_chars,
         request_timeout=limits.request_timeout,
         retries=limits.retries,
+        gleam_directory_max_pages=limits.gleam_directory_max_pages,
     )

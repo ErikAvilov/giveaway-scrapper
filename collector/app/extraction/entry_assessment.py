@@ -58,9 +58,8 @@ _HARD_PATTERNS: tuple[tuple[str, str], ...] = (
     (r"\bpostal\s+(?:entr(?:y|ies)|only)\b", "postal_only"),
     (r"\bsend\s+(?:a\s+)?(?:sae|stamped\s+addressed\s+envelope)\b", "postal_only"),
     (r"\bmail[- ]?in\s+(?:only\s+)?entr", "postal_only"),
-    (r"\breferral", "referrals"),
-    (r"\brefer\s+\d+\s+friends?\b", "referrals"),
-    (r"\binvite\s+\d+\s+friends?\b", "referrals"),
+    # Referral / share / comment presence is NOT a hard reject — optional bonus
+    # methods are evaluated by the entry-path gate instead.
     (r"\bdaily\s+entr(?:y|ies)\b", "daily_entry"),
     (r"\benter\s+(?:every|each)\s+day\b", "daily_entry"),
     (r"\bcreative\s+submission\b", "creative"),
@@ -95,13 +94,28 @@ _UNDESIRABLE_PATTERNS: tuple[tuple[str, str], ...] = (
     (r"\bcasino\b", "casino"),
     (r"\bgambling\b", "gambling"),
     (r"\blottery\b", "lottery"),
-    (r"\bcrypto\b", "crypto"),
-    (r"\bnft\b", "crypto"),
+    # Strong crypto signals only — bare nav labels like a sitewide "Crypto"
+    # category link must not poison ordinary product giveaways.
+    (r"\bcryptocurrenc", "crypto"),
+    (r"\bbitcoin\b", "crypto"),
+    (r"\bethereum\b", "crypto"),
+    (r"\b\w+\s+token\s+airdrop\b", "crypto"),
     (r"\btoken\s+airdrop\b", "crypto"),
-    (r"\bairdrop\b", "crypto"),
+    (r"\bnft\s+giveaway\b", "crypto"),
+    (r"\bwin\s+(?:free\s+)?(?:crypto|bitcoin|ethereum|nft)s?\b", "crypto"),
+    (r"\bcrypto\s+giveaway\b", "crypto"),
     (r"\bsurvey\s+(?:funnel|only)\b", "survey"),
     (r"\bcomplete\s+(?:this\s+)?survey\b", "survey"),
     (r"\blead[- ]?gen", "survey"),
+)
+
+# Applied only against explicit prize/title/category fields (never full page HTML).
+_CRYPTO_FIELD_PATTERNS: tuple[tuple[str, str], ...] = (
+    (r"\bcrypto\b", "crypto"),
+    (r"\bnft\b", "crypto"),
+    (r"\bairdrop\b", "crypto"),
+    (r"\bbitcoin\b", "crypto"),
+    (r"\bethereum\b", "crypto"),
 )
 
 _EXPIRED_PATTERNS: tuple[str, ...] = (
@@ -295,19 +309,38 @@ def infer_eligible_france(
     return None
 
 
-def detect_undesirable(*, title: str | None = None, body: str | None = None) -> list[str]:
-    blob = f"{title or ''}\n{body or ''}"
-    reasons = _hits(blob, _UNDESIRABLE_PATTERNS)
-    if any(re.search(p, blob, re.IGNORECASE) for p in _EXPIRED_PATTERNS):
-        # Avoid flagging "ended" inside longer non-expiry phrases poorly — patterns are tight.
+def detect_undesirable(
+    *,
+    title: str | None = None,
+    body: str | None = None,
+    prize: str | None = None,
+    category: str | None = None,
+) -> list[str]:
+    """
+    Flag paid/gambling/crypto/etc. from giveaway-specific text only.
+
+    Pass cleaned candidate text (title/prize/category/description/rules) — never
+    full-page navigation/sidebar HTML.
+    """
+    field_blob = "\n".join(
+        p for p in (title, prize, category) if p and str(p).strip()
+    )
+    body_blob = body or ""
+    combined = f"{field_blob}\n{body_blob}"
+
+    reasons = _hits(combined, _UNDESIRABLE_PATTERNS)
+    # Short-token crypto labels only count on title/prize/category — not body —
+    # so a sidebar "Crypto" link cannot reject a back-massager giveaway.
+    reasons.extend(_hits(normalize_text(field_blob), _CRYPTO_FIELD_PATTERNS))
+
+    if any(re.search(p, combined, re.IGNORECASE) for p in _EXPIRED_PATTERNS):
         reasons.append("expired")
-    hard_hits = _hits(normalize_text(blob), _HARD_PATTERNS)
-    if _NO_PURCHASE.search(blob):
+    hard_hits = _hits(normalize_text(combined), _HARD_PATTERNS)
+    if _NO_PURCHASE.search(combined):
         hard_hits = [h for h in hard_hits if h != "purchase_required"]
     for h in hard_hits:
-        if h in {"purchase_required", "paid_entry", "postal_only", "referrals"}:
+        if h in {"purchase_required", "paid_entry", "postal_only"}:
             reasons.append(h)
-    # Dedup
     seen: set[str] = set()
     out: list[str] = []
     for r in reasons:
@@ -381,6 +414,8 @@ def assess_entry(
     restriction: str | None = None,
     purchase_required_text: str | None = None,
     free_hint: bool | None = None,
+    prize: str | None = None,
+    category: str | None = None,
 ) -> EntryAssessment:
     friction, method = classify_entry_friction(
         instructions=instructions,
@@ -395,7 +430,12 @@ def assess_entry(
         purchase_required_text=purchase_required_text,
         free_hint=free_hint,
     )
-    bad = detect_undesirable(title=title, body=" ".join(filter(None, [body, instructions])))
+    bad = detect_undesirable(
+        title=title,
+        prize=prize,
+        category=category,
+        body=" ".join(filter(None, [body, instructions])),
+    )
     if purchase_required_text and normalize_text(purchase_required_text.strip()) in {
         "no",
         "false",
@@ -419,13 +459,13 @@ def assess_entry(
 
     skip_reasons = tuple(bad)
     # Skip Gemini when deterministic undesirability is clear.
+    # Referral / optional social presence is handled by entry_acceptability, not here.
     skip_gemini = bool(
         set(skip_reasons)
         & {
             "purchase_required",
             "paid_entry",
             "postal_only",
-            "referrals",
             "casino",
             "gambling",
             "lottery",

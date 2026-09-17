@@ -80,19 +80,22 @@ def looks_clearly_expired(giveaway: Giveaway, *, now: datetime | None = None) ->
 
 
 def looks_undesirable_for_gemini(giveaway: Giveaway) -> bool:
-    """Deterministic paid/gambling/crypto/postal/referral/survey skips."""
+    """Deterministic paid/gambling/crypto/postal/survey skips (not optional referral)."""
     if giveaway.requires_purchase is True:
         return True
     if giveaway.free_entry is False:
         return True
-    reasons = detect_undesirable(title=giveaway.title, body=giveaway.raw_excerpt)
+    reasons = detect_undesirable(
+        title=giveaway.title,
+        prize=giveaway.prize,
+        body=giveaway.raw_excerpt,
+    )
     return bool(
         set(reasons)
         & {
             "purchase_required",
             "paid_entry",
             "postal_only",
-            "referrals",
             "casino",
             "gambling",
             "lottery",

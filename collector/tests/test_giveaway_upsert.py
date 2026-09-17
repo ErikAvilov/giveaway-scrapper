@@ -71,7 +71,7 @@ def test_upsert_creates_then_updates_last_seen(db_conn, unique_url: str) -> None
         repo.delete_by_canonical_url(canonical)
 
 
-def test_upsert_clears_analysis_when_content_hash_changes(
+def test_upsert_preserves_analysis_when_content_hash_changes(
     db_conn, unique_url: str
 ) -> None:
     repo = GiveawayRepository(db_conn)
@@ -83,12 +83,16 @@ def test_upsert_clears_analysis_when_content_hash_changes(
             raw_excerpt="body-v1",
             content_hash="hash-v1",
         )
-        repo.save_analysis(
+        analyzed = repo.save_analysis(
             first.giveaway.id,  # type: ignore[arg-type]
             analysis_json={"ok": True},
             status="active",
             confidence=0.8,
+            eligible_france=True,
+            france_eligibility="eligible",
+            wanted_prize=True,
         )
+        analyzed_at = analyzed.analyzed_at
         db_conn.execute(
             "UPDATE giveaways SET manual_status = %s WHERE id = %s",
             ("interested", first.giveaway.id),
@@ -99,22 +103,25 @@ def test_upsert_clears_analysis_when_content_hash_changes(
             title="New",
             raw_excerpt="body-v2",
             content_hash="hash-v2",
+            eligible_france=None,
+            france_eligibility=None,
+            wanted_prize=None,
         )
         assert second.created is False
         assert second.content_hash_changed is True
         assert second.giveaway.title == "New"
         assert second.giveaway.raw_excerpt == "body-v2"
         assert second.giveaway.content_hash == "hash-v2"
-        assert second.giveaway.analyzed_at is None
-        assert second.giveaway.analysis_json is None
-        assert second.giveaway.confidence is None
-        # Stale confirmed status must not stick until re-analysis.
-        assert second.giveaway.status.value == "candidate"
-        # Manual triage flags survive content resets.
+        # Long-term memory: do not clear Gemini results on rediscovery.
+        assert second.giveaway.analyzed_at == analyzed_at
+        assert second.giveaway.analysis_json == {"ok": True}
+        assert second.giveaway.confidence == 0.8
+        assert second.giveaway.status.value == "active"
+        assert second.giveaway.eligible_france is True
         assert second.giveaway.manual_status.value == "interested"
 
         needing = {str(g.canonical_url) for g in repo.list_needing_analysis(limit=500)}
-        assert canonical in needing
+        assert canonical not in needing
     finally:
         repo.delete_by_canonical_url(canonical)
 

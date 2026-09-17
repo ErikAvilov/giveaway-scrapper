@@ -7,13 +7,23 @@ PYTHON := $(COLLECTOR)/.venv/bin/python3
 PIP := $(COLLECTOR)/.venv/bin/pip
 
 LIMIT ?= 25
+URL ?=
+ADAPTER ?=
+MAX_PAGES ?= 8
+MAX_DEPTH ?= 1
+DRY_RUN ?=
+NO_HEADLESS ?=
+FRANCE_ONLY ?=
+BOT_PYTHON ?=
 
 .PHONY: help \
 	venv install init \
 	db-init seed \
 	purge-giveaways validate-links reset-crawl \
-	reprioritize-entry \
+	reprioritize-entry reevaluate-entry-rules \
 	crawl crawl-dry crawl-real crawl-real-dry \
+	probe \
+	enter-gleam \
 	analyze analyze-all pipeline worker stats health \
 	test lint check \
 	dashboard-install dashboard dashboard-build dashboard-check \
@@ -37,6 +47,7 @@ help:
 	@echo "  make validate-links       Valide les entry URLs (LIMIT=50 par défaut)"
 	@echo "  make validate-links LIMIT=100"
 	@echo "  make reprioritize-entry   Backfill gate social public (LIMIT=500)"
+	@echo "  make reevaluate-entry-rules  Recalcule les rejects social public trop agressifs"
 	@echo "  make reset-crawl          Remet les sources enabled au prochain crawl"
 	@echo ""
 	@echo "Scraping"
@@ -44,6 +55,10 @@ help:
 	@echo "  make crawl-dry            Crawl normal sans écriture giveaways"
 	@echo "  make crawl-real           Petit crawl réel limité"
 	@echo "  make crawl-real-dry       Petit crawl réel limité sans écriture"
+	@echo "  make probe URL=...        Test manuel d'un lien (dry-run)"
+	@echo "  make probe URL=example.com ADAPTER=gleam MAX_PAGES=5"
+	@echo "  make enter-gleam DRY_RUN=1 Desktop: file Gleam Selenium (voir Gleam-giveaway-bot/)"
+	@echo "  make enter-gleam LIMIT=5 BOT_PYTHON=Gleam-giveaway-bot/.venv/bin/python"
 	@echo ""
 	@echo "Gemini"
 	@echo "  make analyze              Analyse les pending (LIMIT=25 par défaut)"
@@ -115,6 +130,9 @@ validate-links:
 reprioritize-entry:
 	cd $(COLLECTOR) && ../$(PYTHON) -m app.cli reprioritize-entry --limit $(LIMIT)
 
+reevaluate-entry-rules:
+	cd $(COLLECTOR) && ../$(PYTHON) -m app.cli reevaluate-entry-rules --limit $(LIMIT)
+
 reset-crawl:
 	cd $(COLLECTOR) && ../$(PYTHON) -m app.cli reset-crawl-schedule
 
@@ -133,6 +151,30 @@ crawl-real:
 
 crawl-real-dry:
 	cd $(COLLECTOR) && ../$(PYTHON) -m app.cli crawl --real-test --dry-run
+
+# Manual link probe (dry-run diagnostics). Example:
+#   make probe URL=https://example.com ADAPTER=gleam MAX_PAGES=5
+probe:
+ifndef URL
+	$(error URL is required. Example: make probe URL=example.com ADAPTER=gleam)
+endif
+	cd $(COLLECTOR) && ../$(PYTHON) -m app.cli probe "$(URL)" \
+		$(if $(ADAPTER),--adapter $(ADAPTER),) \
+		--max-pages $(MAX_PAGES) \
+		--max-depth $(MAX_DEPTH) \
+		$(if $(JSON),--json,)
+
+# Desktop Gleam enter bot (Selenium — NOT for the Pi worker).
+# Queue dry-run:  make enter-gleam DRY_RUN=1
+# Live (interested first): make enter-gleam LIMIT=5
+# Visible browser: make enter-gleam NO_HEADLESS=1 LIMIT=1
+enter-gleam:
+	cd $(COLLECTOR) && ../$(PYTHON) -m app.cli enter-gleam \
+		--limit $(LIMIT) \
+		$(if $(DRY_RUN),--dry-run,) \
+		$(if $(NO_HEADLESS),--no-headless,) \
+		$(if $(FRANCE_ONLY),--france-only,) \
+		$(if $(BOT_PYTHON),--bot-python $(BOT_PYTHON),)
 
 # --------------------------------------------------
 # Gemini analysis

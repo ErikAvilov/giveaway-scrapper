@@ -34,14 +34,15 @@ export function GiveawayDetailPanel({
 
   function setManual(status: ManualStatus) {
     startTransition(async () => {
-      await updateGiveawayManualStatusAction(giveaway.id, status);
-      if (status === "ignored" && !viewingIgnored) {
+      const next = giveaway.manual_status === status ? "none" : status;
+      await updateGiveawayManualStatusAction(giveaway.id, next);
+      if (next === "ignored" && !viewingIgnored) {
         const params = new URLSearchParams(window.location.search);
         params.delete("id");
         const qs = params.toString();
         router.replace(qs ? `/giveaways?${qs}` : "/giveaways");
-      } else if (status !== "ignored" && viewingIgnored) {
-        router.replace("/giveaways?manual_status=ignored&wanted=0");
+      } else if (next !== "ignored" && viewingIgnored) {
+        router.replace("/giveaways?view=ignored&wanted=0&france=0&status=all");
       } else {
         router.refresh();
       }
@@ -64,7 +65,7 @@ export function GiveawayDetailPanel({
 
   function close() {
     if (viewingIgnored) {
-      router.push("/giveaways?manual_status=ignored&wanted=0");
+      router.push("/giveaways?view=ignored&wanted=0&france=0&status=all");
     } else {
       const params = new URLSearchParams(window.location.search);
       params.delete("id");
@@ -132,16 +133,18 @@ export function GiveawayDetailPanel({
             {giveaway.entry_acceptable == null
               ? "unknown"
               : giveaway.entry_acceptable
-                ? "yes"
+                ? "yes (non-public path)"
                 : "no"}
           </dd>
           <dt className="text-zinc-500">Public social</dt>
           <dd>
-            {giveaway.requires_public_social_action == null
-              ? "—"
-              : giveaway.requires_public_social_action
-                ? "required"
-                : "no"}
+            {giveaway.requires_public_social_action === true
+              ? "required for entry"
+              : giveaway.entry_acceptable === true && giveaway.requires_social
+                ? "optional / bonus only"
+                : giveaway.requires_public_social_action == null
+                  ? "—"
+                  : "not required"}
           </dd>
           <dt className="text-zinc-500">Entry reject</dt>
           <dd className="break-words">{giveaway.entry_rejection_reason || "—"}</dd>

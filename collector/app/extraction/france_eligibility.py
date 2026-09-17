@@ -83,7 +83,7 @@ _US_ONLY = re.compile(
     r"\bavailable\s+in\s+united\s+states\b|"
     r"\beligible\s*🇺🇸?\s*us\b|"
     r"\beligible[:\s]+(?:🇺🇸\s*)?(?:us|usa|united\s+states)\b|"
-    r"^🇺🇸\s*us$|"
+    r"(?:^|\n)🇺🇸\s*us(?:\n|$)|"
     r"^us$",
     re.IGNORECASE,
 )

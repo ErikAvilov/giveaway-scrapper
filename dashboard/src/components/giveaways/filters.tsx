@@ -37,6 +37,7 @@ export function GiveawayFiltersBar({
 
   return (
     <form className="grid grid-cols-2 gap-3 border-b border-zinc-200 p-4 md:grid-cols-4 xl:grid-cols-6 dark:border-zinc-800">
+      <input type="hidden" name="view" value={values.view ?? "inbox"} />
       <label className="block space-y-1.5">
         <span className="text-xs uppercase text-zinc-500">Search</span>
         <Input name="q" defaultValue={values.q ?? ""} placeholder="Title, prize, domain…" />
@@ -47,18 +48,6 @@ export function GiveawayFiltersBar({
           <option value="active">Active (default)</option>
           <option value="all">All statuses</option>
           <option value="expired">Expired</option>
-        </Select>
-      </label>
-      <label className="block space-y-1.5">
-        <span className="text-xs uppercase text-zinc-500">Manual status</span>
-        <Select name="manual_status" defaultValue={values.manual_status ?? "all"}>
-          <option value="all">Main view (hide ignored)</option>
-          <option value="ignored">Ignored list</option>
-          <option value="none">none</option>
-          <option value="interested">interested</option>
-          <option value="entered">entered</option>
-          <option value="won">won</option>
-          <option value="lost">lost</option>
         </Select>
       </label>
       <label className="block space-y-1.5">

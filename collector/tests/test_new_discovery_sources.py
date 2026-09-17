@@ -221,6 +221,7 @@ def test_gleam_directory_discovers_campaigns() -> None:
     assert listing.follow_urls
     assert any("/Ab12Cd/" in u for u in listing.follow_urls)
     assert all("pricing" not in u for u in listing.follow_urls)
+    assert all("/guides" not in u for u in listing.follow_urls)
 
 
 def test_world_free_prizes_worldwide_and_us() -> None:

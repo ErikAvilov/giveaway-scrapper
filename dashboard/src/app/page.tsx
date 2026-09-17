@@ -57,18 +57,25 @@ export default async function OverviewPage() {
 
       {stats ? (
         <div className="grid grid-cols-2 gap-2 md:grid-cols-4 xl:grid-cols-5">
-          <Stat label="Active" value={stats.active} />
-          <Stat label="France eligible" value={stats.france_eligible} />
-          <Stat label="Free entry" value={stats.free_entry} />
+          <Link href="/giveaways">
+            <Stat label="Inbox" value={stats.inbox} />
+          </Link>
+          <Link href="/giveaways?view=interested">
+            <Stat label="Interested" value={stats.interested} />
+          </Link>
           <Stat label="Ending 24h" value={stats.ending_24h} />
           <Stat label="Ending 7d" value={stats.ending_7d} />
           <Stat label="Discovered today" value={stats.discovered_today} />
           <Link href="/giveaways?reminders_due=1&wanted=0&france=0&sort=remind_at">
             <Stat label="Rappels dus" value={stats.reminders_due} />
           </Link>
-          <Stat label="Entered" value={stats.entered} />
+          <Link href="/giveaways?view=entered&wanted=0&france=0&status=all">
+            <Stat label="Entered" value={stats.entered} />
+          </Link>
+          <Link href="/giveaways?view=ignored&wanted=0&france=0&status=all">
+            <Stat label="Ignored" value={stats.ignored} />
+          </Link>
           <Stat label="Won" value={stats.won} />
-          <Stat label="Ignored" value={stats.ignored} />
         </div>
       ) : null}
 

@@ -47,7 +47,7 @@ def test_real_sources_file_has_french_and_international() -> None:
     assert "GiveawayBase" in enabled_names
     assert "GleamFinder International" in enabled_names
     assert "SweepWidget Directory" in enabled_names
-    assert "Gleam.io Directory" in enabled_names
+    assert "Gleam Official Directory" in enabled_names
     assert "WorldFreePrizes Worldwide" in enabled_names
     assert "ThePrizeFinder Worldwide" in enabled_names
     assert "SweepstakesBible Worldwide" in enabled_names
@@ -89,12 +89,15 @@ def test_real_sources_file_has_french_and_international() -> None:
             "eu",
             "worldwide",
         ]
-    gleam = by_name["Gleam.io Directory"]
+    gleam = by_name["Gleam Official Directory"]
     assert gleam["enabled"] is True
     assert gleam["source_type"] == "other"
     assert gleam["crawl_config"]["adapter"] == "gleam"
+    assert gleam["crawl_config"]["profile"] == "real"
     assert gleam["crawl_config"]["target_regions"] == ["worldwide", "france", "eu"]
     assert "gleam.io/giveaways" in gleam["base_url"]
+    assert int(gleam["crawl_config"].get("gleam_directory_max_pages") or 0) >= 1
+    assert int(gleam["crawl_config"].get("max_depth") or 0) >= 2
     assert all(
         r["source_type"] in {"giveaway_aggregator", "other"} for r in rows
     )
@@ -120,7 +123,14 @@ def test_seed_real_sources(settings: Settings, migrated_db) -> None:
         enabled = [s for s in seeded if s.enabled]
         assert len(seeded) >= 12
         assert len(enabled) >= 13
-        assert {s.name for s in seeded} >= {"GleamGiveaways", "GiveawayBase"}
+        assert {s.name for s in seeded} >= {
+            "GleamGiveaways",
+            "GiveawayBase",
+            "Gleam Official Directory",
+        }
+        official = next(s for s in seeded if s.name == "Gleam Official Directory")
+        assert official.enabled is True
+        assert "gleam.io/giveaways" in str(official.base_url)
         assert all(
             s.source_type
             in {SourceType.GIVEAWAY_AGGREGATOR, SourceType.OTHER}

@@ -38,6 +38,18 @@ python -m app.cli pipeline --limit 50   # hard cap: ≤50 Gemini calls
 python -m app.cli stats
 python -m app.cli health
 python -m app.cli worker          # continuous scheduler
+python -m app.cli enter-gleam --dry-run   # file Gleam → bot desktop
+```
+
+### Gleam enter bot (desktop only)
+
+The sibling folder `Gleam-giveaway-bot/` clicks Gleam entry methods for Neon rows
+(`platform=gleam`, `manual_status=interested|none`). See
+`../Gleam-giveaway-bot/README.md`. **Do not run Chromium on the Pi worker.**
+
+```bash
+make enter-gleam DRY_RUN=1
+make enter-gleam LIMIT=5 BOT_PYTHON=Gleam-giveaway-bot/.venv/bin/python
 ```
 
 ### First real-source dry-run

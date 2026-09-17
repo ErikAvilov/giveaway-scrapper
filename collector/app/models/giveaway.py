@@ -77,6 +77,7 @@ class Giveaway(BaseModel):
     link_hints: list[str] = Field(default_factory=list)
     analysis_json: dict[str, Any] | None = None
     manual_status: ManualStatus = ManualStatus.NONE
+    manual_status_updated_at: datetime | None = None
     remind_at: datetime | None = None
     reminder_hours: int | None = Field(default=None, ge=1, le=24 * 30)
     requires_public_social_action: bool | None = None

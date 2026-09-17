@@ -9,6 +9,13 @@ function endingSoon(g: GiveawayRow): boolean {
 }
 
 export function GiveawayBadges({ giveaway }: { giveaway: GiveawayRow }) {
+  const publicRequired =
+    giveaway.requires_public_social_action === true || giveaway.entry_acceptable === false;
+  const publicOptional =
+    !publicRequired &&
+    giveaway.entry_acceptable === true &&
+    giveaway.requires_social === true;
+
   return (
     <div className="flex flex-wrap gap-1">
       {giveaway.wanted_prize === true ? <Badge variant="free">Wanted</Badge> : null}
@@ -23,9 +30,12 @@ export function GiveawayBadges({ giveaway }: { giveaway: GiveawayRow }) {
       {giveaway.eligible_france ? <Badge variant="france">France</Badge> : null}
       {giveaway.free_entry ? <Badge variant="free">Free</Badge> : null}
       {giveaway.requires_purchase ? <Badge variant="purchase">Purchase</Badge> : null}
-      {giveaway.requires_social ? <Badge variant="social">Social</Badge> : null}
-      {giveaway.requires_public_social_action || giveaway.entry_acceptable === false ? (
-        <Badge variant="danger">Public social action</Badge>
+      {publicRequired ? (
+        <Badge variant="danger">Public action required</Badge>
+      ) : publicOptional ? (
+        <Badge variant="social">Public action optional</Badge>
+      ) : giveaway.requires_social ? (
+        <Badge variant="social">Social</Badge>
       ) : null}
       {giveaway.reminder_due ? (
         <Badge variant="warn">Rappel dû · {formatRelativeHours(giveaway.remind_at)}</Badge>

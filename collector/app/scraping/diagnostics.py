@@ -210,21 +210,60 @@ class SourceFilterSummary:
     dead_urls: int
     duplicates: int
     would_keep: int
+    public_social_required: int = 0
+    campaigns_parsed: int = 0
+    gleam_directory: dict[str, Any] | None = None
 
     def format_lines(self) -> list[str]:
-        return [
+        lines = [
             self.source,
             f"Fetched: {self.pages_fetched}",
             f"Candidates: {self.candidates}",
-            f"Worldwide/France: {self.france_eligible}",
-            f"France ineligible: {self.france_ineligible}",
-            f"France unknown: {self.france_unknown}",
-            f"Wanted prizes: {self.wanted}",
-            f"Unwanted: {self.unwanted}",
-            f"Dead: {self.dead_urls}",
-            f"Duplicates: {self.duplicates}",
-            f"Would keep: {self.would_keep}",
         ]
+        gd = self.gleam_directory or {}
+        if gd:
+            rate = gd.get("campaign_parse_rate_pct") or "n/a"
+            lines.extend(
+                [
+                    "Gleam Official Directory",
+                    f"listing_pages_fetched={gd.get('listing_pages_fetched', 0)}",
+                    f"directory_links_discovered={gd.get('directory_links_discovered', gd.get('giveaway_links_discovered', 0))}",
+                    f"giveaway_detail_pages_scheduled={gd.get('giveaway_detail_pages_scheduled', 0)}",
+                    f"giveaway_detail_pages_fetched={gd.get('giveaway_detail_pages_fetched', gd.get('detail_pages_fetched', 0))}",
+                    f"giveaway_detail_http_2xx={gd.get('giveaway_detail_http_2xx', 0)}",
+                    f"giveaway_detail_http_errors={gd.get('giveaway_detail_http_errors', 0)}",
+                    f"campaigns_parsed={gd.get('campaigns_parsed', self.campaigns_parsed)}",
+                    f"campaign_parse_failures={gd.get('campaign_parse_failures', 0)}",
+                    f"campaign_parse_rate={rate}",
+                    f"duplicates={gd.get('duplicates', self.duplicates)}",
+                    f"filtered_before_detail={gd.get('filtered_before_detail', 0)}",
+                    f"filtered_after_detail={gd.get('filtered_after_detail', 0)}",
+                    f"france_eligible={self.france_eligible}",
+                    f"france_ineligible={self.france_ineligible}",
+                    f"france_unknown={self.france_unknown}",
+                    f"wanted={self.wanted}",
+                    f"unwanted={self.unwanted}",
+                    f"public_social_required={self.public_social_required}",
+                    f"would_keep={self.would_keep}",
+                ]
+            )
+            for reason in gd.get("parse_failure_reasons") or []:
+                lines.append(f"parse_failure={reason}")
+            return lines
+        lines.extend(
+            [
+                f"Worldwide/France: {self.france_eligible}",
+                f"France ineligible: {self.france_ineligible}",
+                f"France unknown: {self.france_unknown}",
+                f"Wanted prizes: {self.wanted}",
+                f"Unwanted: {self.unwanted}",
+                f"public_social_required={self.public_social_required}",
+                f"Dead: {self.dead_urls}",
+                f"Duplicates: {self.duplicates}",
+                f"Would keep: {self.would_keep}",
+            ]
+        )
+        return lines
 
 
 def summarize_source_candidates(
@@ -233,11 +272,14 @@ def summarize_source_candidates(
     pages_fetched: int,
     candidates: list[dict[str, Any]],
     threshold: float,
+    gleam_directory: dict[str, Any] | None = None,
 ) -> SourceFilterSummary:
     """Aggregate France / prize / keep stats for real-test dry output."""
     fr_ok = fr_no = fr_unk = 0
     wanted = unwanted = 0
     dead = 0
+    public_social = 0
+    campaigns_parsed = 0
     seen_keys: set[str] = set()
     duplicates = 0
     would_keep = 0
@@ -255,6 +297,14 @@ def summarize_source_candidates(
             wanted += 1
         elif item.get("wanted_prize") is False:
             unwanted += 1
+
+        if item.get("entry_acceptable") is False or item.get(
+            "requires_public_social_action"
+        ) is True:
+            public_social += 1
+
+        if item.get("platform") == "gleam" and item.get("platform_campaign_id"):
+            campaigns_parsed += 1
 
         status = str(item.get("entry_url_status") or "")
         if status == "gone":
@@ -299,4 +349,7 @@ def summarize_source_candidates(
         dead_urls=dead,
         duplicates=duplicates,
         would_keep=would_keep,
+        public_social_required=public_social,
+        campaigns_parsed=campaigns_parsed,
+        gleam_directory=gleam_directory,
     )

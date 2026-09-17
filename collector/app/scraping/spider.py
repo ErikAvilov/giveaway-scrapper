@@ -58,6 +58,7 @@ class SpiderLimits:
     excerpt_max_chars: int
     request_timeout: float
     retries: int
+    gleam_directory_max_pages: int = 5
 
 
 class GiveawayDiscoverySpider(Spider):
@@ -93,6 +94,143 @@ class GiveawayDiscoverySpider(Spider):
         self._seen_canonical: set[str] = set()
         self._candidate_urls: set[str] = set()
         self._errors: list[str] = []
+        self._gleam_directory_stats: dict[str, Any] = {
+            "listing_pages_fetched": 0,
+            "directory_links_discovered": 0,
+            "giveaway_detail_pages_scheduled": 0,
+            "giveaway_detail_enqueued": 0,
+            "giveaway_detail_pages_fetched": 0,
+            "giveaway_detail_http_2xx": 0,
+            "giveaway_detail_http_errors": 0,
+            "classic_campaign_pages_fetched": 0,
+            "classic_campaign_http_2xx": 0,
+            "campaigns_parsed": 0,
+            "campaign_parse_failures": 0,
+            "duplicates": 0,
+            "filtered_before_detail": 0,
+            "filtered_after_detail": 0,
+            "parse_failure_reasons": [],
+            "sample_titles": [],
+            "sample_detail_urls": [],
+            "seen_campaign_ids": [],
+        }
+
+    def _gleam_bump(self, **deltas: Any) -> None:
+        stats = self._gleam_directory_stats
+        for key, value in deltas.items():
+            if key in {
+                "sample_titles",
+                "sample_detail_urls",
+                "parse_failure_reasons",
+                "seen_campaign_ids",
+            }:
+                existing = list(stats.get(key) or [])
+                items = value if isinstance(value, list) else [value]
+                for item in items:
+                    if item and item not in existing:
+                        existing.append(item)
+                limit = 50 if key == "seen_campaign_ids" else 20
+                stats[key] = existing[:limit]
+            else:
+                stats[key] = int(stats.get(key) or 0) + int(value or 0)
+
+    def _gleam_finalize_stats(self) -> dict[str, Any]:
+        stats = dict(self._gleam_directory_stats)
+        parsed = int(stats.get("campaigns_parsed") or 0)
+        failures = int(stats.get("campaign_parse_failures") or 0)
+        http_2xx = int(stats.get("giveaway_detail_http_2xx") or 0)
+        discovered = int(stats.get("directory_links_discovered") or 0)
+        enqueued = int(stats.get("giveaway_detail_enqueued") or 0)
+        # Scheduled = actually enqueued under MAX_PAGES (not merely discovered).
+        stats["giveaway_detail_pages_scheduled"] = enqueued
+        # Discovered but never enqueued because the page budget was exhausted.
+        stats["filtered_before_detail"] = max(0, discovered - enqueued)
+        denom = http_2xx if http_2xx > 0 else (parsed + failures)
+        rate = (parsed / denom) if denom else None
+        stats["campaign_parse_rate"] = round(rate, 4) if rate is not None else None
+        stats["campaign_parse_rate_pct"] = (
+            f"{round(rate * 100)}%" if rate is not None else "n/a"
+        )
+        stats.pop("seen_campaign_ids", None)
+        stats.pop("giveaway_detail_enqueued", None)
+        return stats
+
+    def _response_http_status(self, response: Any) -> int | None:
+        for attr in ("status", "status_code", "statusCode"):
+            raw = getattr(response, attr, None)
+            if raw is None:
+                continue
+            try:
+                return int(raw)
+            except (TypeError, ValueError):
+                continue
+        return None
+
+    def _record_gleam_funnel(
+        self,
+        response: Any,
+        *,
+        page_url: str,
+        enrichment: PageEnrichment,
+    ) -> None:
+        from app.platforms.gleam import (
+            parse_gleam_campaign_url,
+            parse_gleam_directory_detail_url,
+        )
+
+        meta = enrichment.meta or {}
+        status = self._response_http_status(response)
+        ok = status is None or 200 <= status < 300
+
+        if meta.get("gleam_directory_listing"):
+            discovered = int(meta.get("giveaway_links_discovered") or 0)
+            self._gleam_bump(
+                listing_pages_fetched=1,
+                directory_links_discovered=discovered,
+                sample_titles=list(meta.get("sample_titles") or []),
+                sample_detail_urls=list(meta.get("sample_detail_urls") or []),
+            )
+            return
+
+        if meta.get("gleam_directory_detail") or parse_gleam_directory_detail_url(
+            page_url
+        ):
+            # Shell page — still counted, but not a campaign parse attempt.
+            self._gleam_bump(directory_shell_pages_fetched=1)
+            if not ok:
+                self._gleam_bump(giveaway_detail_http_errors=1)
+            return
+
+        key, _slug = parse_gleam_campaign_url(page_url)
+        if meta.get("gleam_classic_campaign") or key:
+            # Classic campaign pages are the parse targets for this funnel.
+            self._gleam_bump(
+                giveaway_detail_pages_fetched=1,
+                classic_campaign_pages_fetched=1,
+            )
+            if ok:
+                self._gleam_bump(
+                    giveaway_detail_http_2xx=1,
+                    classic_campaign_http_2xx=1,
+                )
+            else:
+                self._gleam_bump(giveaway_detail_http_errors=1)
+                return
+            if meta.get("parse_status") == "ok":
+                cid = meta.get("platform_campaign_id") or key
+                seen = list(self._gleam_directory_stats.get("seen_campaign_ids") or [])
+                if cid and cid in seen:
+                    self._gleam_bump(duplicates=1)
+                else:
+                    if cid:
+                        self._gleam_bump(seen_campaign_ids=[cid])
+                    self._gleam_bump(campaigns_parsed=1)
+            elif meta.get("parse_status") == "payload_missing":
+                reason = meta.get("parse_failure_reason") or "other"
+                self._gleam_bump(
+                    campaign_parse_failures=1,
+                    parse_failure_reasons=[f"{reason}"],
+                )
 
     def configure_sessions(self, manager: SessionManager) -> None:
         limits = self.limits
@@ -159,9 +297,14 @@ class GiveawayDiscoverySpider(Spider):
             (child.entry_method_text if child else None)
             or (enrichment.entry_method_text if enrichment else None)
         )
+        filter_body = (
+            meta.get("filter_text")
+            if isinstance(meta.get("filter_text"), str) and meta.get("filter_text").strip()
+            else excerpt
+        )
         return assess_entry(
             title=title,
-            body=excerpt,
+            body=filter_body,
             instructions=instructions,
             entry_method_text=instructions,
             restriction=restriction,
@@ -169,6 +312,9 @@ class GiveawayDiscoverySpider(Spider):
             if isinstance(meta.get("purchase_required_text"), str)
             else None,
             free_hint=meta.get("free_hint") if isinstance(meta.get("free_hint"), bool) else None,
+            prize=(child.prize if child and child.prize else None)
+            or (enrichment.prize if enrichment else None),
+            category=meta.get("category") if isinstance(meta.get("category"), str) else None,
         )
 
     def _candidate_item(
@@ -268,12 +414,21 @@ class GiveawayDiscoverySpider(Spider):
             for et in meta.get("optional_entry_types") or []:
                 actions_for_gate.append({"entry_type": et, "mandatory": False})
 
+        actions_required_raw = meta.get("actions_required")
+        actions_required: int | None = None
+        if actions_required_raw is not None:
+            try:
+                actions_required = max(0, int(actions_required_raw))
+            except (TypeError, ValueError):
+                actions_required = None
+
         entry_gate = assess_entry_acceptability(
             title=title,
             prize=prize,
             body=excerpt,
             entry_method=assessment.entry_method,
             platform_actions=actions_for_gate or None,
+            actions_required=actions_required,
         )
         if entry_gate.entry_acceptable is False:
             status = GiveawayStatus.REJECTED
@@ -281,6 +436,13 @@ class GiveawayDiscoverySpider(Spider):
             reason = entry_gate.entry_rejection_reason or "requires public social-media action"
             if reason not in skip_reasons:
                 skip_reasons.append(reason)
+
+        if (
+            skip_analyze
+            and meta.get("gleam_classic_campaign")
+            and meta.get("parse_status") == "ok"
+        ):
+            self._gleam_bump(filtered_after_detail=1)
 
         return {
             "kind": "candidate",
@@ -356,7 +518,14 @@ class GiveawayDiscoverySpider(Spider):
         enrichment: PageEnrichment | None = None
 
         if self.adapter is not None:
+            # Gleam directory pagination bound (Pi-friendly).
+            if self.limits is not None:
+                try:
+                    response._gleam_directory_max_pages = self.limits.gleam_directory_max_pages
+                except (AttributeError, TypeError):
+                    pass
             enrichment = self.adapter.enrich(response, page_url=page_url)
+            self._record_gleam_funnel(response, page_url=page_url, enrichment=enrichment)
             if enrichment.title:
                 title = enrichment.title
             if enrichment.excerpt:
@@ -462,6 +631,13 @@ class GiveawayDiscoverySpider(Spider):
                 adapter_meta=adapter_meta,
                 expired_flag=bool(adapter_meta.get("expired")),
             )
+        elif (
+            not skip_as_candidate
+            and adapter_meta.get("gleam_classic_campaign")
+            and adapter_meta.get("parse_status") == "ok"
+            and scored.score < limits.candidate_threshold
+        ):
+            self._gleam_bump(filtered_after_detail=1)
 
         if depth >= limits.max_depth:
             return
@@ -514,11 +690,26 @@ class GiveawayDiscoverySpider(Spider):
             ):
                 continue
             queued.add(canonical)
+            from app.platforms.gleam import parse_gleam_campaign_url
+
+            if (
+                enrichment is not None
+                and (enrichment.meta or {}).get("gleam_directory_listing")
+                and parse_gleam_campaign_url(canonical)[0]
+            ):
+                self._gleam_bump(giveaway_detail_enqueued=1)
             yield response.follow(
                 absolute,
                 sid="http",
                 callback=self.parse,
-                meta={"depth": depth + 1, "anchor_text": (text or "")[:200]},
+                meta={
+                    "depth": depth + 1,
+                    "anchor_text": (text or "")[:200],
+                    "gleam_from_directory": bool(
+                        enrichment is not None
+                        and (enrichment.meta or {}).get("gleam_directory_listing")
+                    ),
+                },
             )
 
 
@@ -581,4 +772,6 @@ def run_spider(spider: GiveawayDiscoverySpider) -> tuple[list[dict[str, Any]], d
     stats["candidates_local"] = len(items)
     stats["errors_local"] = list(spider._errors)
     stats["request_failed_count"] = stats.get("failed_requests_count", 0)
+    if spider._gleam_directory_stats:
+        stats["gleam_directory"] = spider._gleam_finalize_stats()
     return items, stats

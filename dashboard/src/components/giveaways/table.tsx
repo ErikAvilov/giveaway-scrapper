@@ -64,14 +64,16 @@ export function GiveawaysTable({
 
   function setManual(id: string, status: ManualStatus) {
     startTransition(async () => {
-      await updateGiveawayManualStatusAction(id, status);
-      if (status === "ignored" && !viewingIgnored) {
+      const row = rows.find((r) => r.id === id);
+      const next = row?.manual_status === status ? "none" : status;
+      await updateGiveawayManualStatusAction(id, next);
+      if (next === "ignored" && !viewingIgnored) {
         const params = new URLSearchParams(window.location.search);
         params.delete("id");
         const qs = params.toString();
         router.replace(qs ? `/giveaways?${qs}` : "/giveaways");
-      } else if (status !== "ignored" && viewingIgnored && selectedId === id) {
-        router.replace("/giveaways?manual_status=ignored&wanted=0");
+      } else if (next !== "ignored" && viewingIgnored && selectedId === id) {
+        router.replace("/giveaways?view=ignored&wanted=0&france=0&status=all");
       } else {
         router.refresh();
       }

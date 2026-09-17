@@ -41,10 +41,15 @@ class SourceCrawlResult:
     candidate_threshold: float = 0.45
     # Kept for dry-run / real-test diagnostics; cleared after persistence otherwise.
     candidates: list[dict[str, Any]] = field(default_factory=list)
+    gleam_directory: dict[str, Any] = field(default_factory=dict)
 
 
 def _limits_for_source(source: Source, settings: Settings) -> SpiderLimits:
     cfg = source.crawl_config or {}
+    gleam_pages = cfg.get(
+        "gleam_directory_max_pages",
+        getattr(settings, "gleam_directory_max_pages", 5),
+    )
     return SpiderLimits(
         max_depth=int(cfg.get("max_depth", settings.crawl_max_depth)),
         max_pages=int(cfg.get("max_pages", settings.crawl_max_pages_per_source)),
@@ -56,6 +61,7 @@ def _limits_for_source(source: Source, settings: Settings) -> SpiderLimits:
         ),
         request_timeout=float(cfg.get("request_timeout", settings.crawl_request_timeout)),
         retries=int(cfg.get("retries", settings.crawl_retries)),
+        gleam_directory_max_pages=max(1, int(gleam_pages)),
     )
 
 
@@ -87,6 +93,7 @@ def crawl_source(
     status = CrawlRunStatus.SUCCESS
     retain_candidates = dry_run or real_test
     threshold = settings.crawl_candidate_threshold
+    gleam_directory: dict[str, Any] = {}
 
     try:
         base = str(source.base_url)
@@ -125,6 +132,7 @@ def crawl_source(
             stats.get("blocked_requests_count") or 0
         )
         errors = engine_errors
+        gleam_directory = dict(stats.get("gleam_directory") or {})
         # Drop spider graph promptly on a 2 GB Pi.
         del spider
         del stats
@@ -241,6 +249,7 @@ def crawl_source(
         error_summary=error_summary,
         candidate_threshold=threshold,
         candidates=candidates if retain_candidates else [],
+        gleam_directory=gleam_directory,
     )
 
 

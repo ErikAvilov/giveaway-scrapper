@@ -62,6 +62,12 @@ class Settings(BaseSettings):
     crawl_autothrottle_max_delay: float = Field(default=30.0, ge=1.0)
     crawl_candidate_threshold: float = Field(default=0.45, ge=0.0, le=1.0)
     crawl_raw_excerpt_max_chars: int = Field(default=3000, ge=500, le=20000)
+    gleam_directory_max_pages: int = Field(
+        default=5,
+        ge=1,
+        le=50,
+        description="Max Gleam.io /giveaways listing pages (sort×pagination) per crawl",
+    )
 
     # --- Continuous worker (Pi) ---
     worker_idle_sleep_seconds: float = Field(default=60.0, ge=5.0, le=3600.0)

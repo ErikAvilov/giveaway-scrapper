@@ -75,6 +75,9 @@ function mapGiveaway(row: Record<string, unknown>): GiveawayRow {
     link_hints,
     analysis_json: (row.analysis_json as Record<string, unknown> | null) ?? null,
     manual_status: row.manual_status as ManualStatus,
+    manual_status_updated_at: row.manual_status_updated_at
+      ? new Date(String(row.manual_status_updated_at))
+      : null,
     remind_at: row.remind_at ? new Date(String(row.remind_at)) : null,
     reminder_hours: row.reminder_hours != null ? Number(row.reminder_hours) : null,
     reminder_due: Boolean(row.reminder_due),
@@ -86,24 +89,47 @@ function mapGiveaway(row: Record<string, unknown>): GiveawayRow {
 export async function getOverviewStats(): Promise<OverviewStats> {
   const rows = await sql`
     SELECT
-      (SELECT count(*)::int FROM giveaways WHERE status = 'active' AND manual_status <> 'ignored') AS active,
-      (SELECT count(*)::int FROM giveaways WHERE eligible_france IS TRUE AND manual_status <> 'ignored') AS france_eligible,
-      (SELECT count(*)::int FROM giveaways WHERE free_entry IS TRUE AND manual_status <> 'ignored') AS free_entry,
+      (SELECT count(*)::int FROM giveaways
+        WHERE manual_status IN ('none', 'interested')
+          AND status = 'active'
+          AND wanted_prize IS TRUE
+          AND (eligible_france IS TRUE OR france_eligibility = 'eligible')
+          AND entry_acceptable IS TRUE
+          AND (entry_url_status IS NULL OR entry_url_status <> 'gone')) AS inbox,
+      (SELECT count(*)::int FROM giveaways
+        WHERE manual_status = 'interested'
+          AND status = 'active'
+          AND wanted_prize IS TRUE
+          AND (eligible_france IS TRUE OR france_eligibility = 'eligible')
+          AND entry_acceptable IS TRUE
+          AND (entry_url_status IS NULL OR entry_url_status <> 'gone')) AS interested,
       (SELECT count(*)::int FROM giveaways
         WHERE status = 'active'
-          AND manual_status <> 'ignored'
+          AND manual_status IN ('none', 'interested')
+          AND wanted_prize IS TRUE
+          AND (eligible_france IS TRUE OR france_eligibility = 'eligible')
+          AND entry_acceptable IS TRUE
+          AND (entry_url_status IS NULL OR entry_url_status <> 'gone')) AS active,
+      (SELECT count(*)::int FROM giveaways
+        WHERE (eligible_france IS TRUE OR france_eligibility = 'eligible')
+          AND manual_status IN ('none', 'interested')) AS france_eligible,
+      (SELECT count(*)::int FROM giveaways
+        WHERE free_entry IS TRUE AND manual_status IN ('none', 'interested')) AS free_entry,
+      (SELECT count(*)::int FROM giveaways
+        WHERE status = 'active'
+          AND manual_status IN ('none', 'interested')
           AND end_at IS NOT NULL
           AND end_at <= now() + interval '24 hours'
           AND end_at >= now()) AS ending_24h,
       (SELECT count(*)::int FROM giveaways
         WHERE status = 'active'
-          AND manual_status <> 'ignored'
+          AND manual_status IN ('none', 'interested')
           AND end_at IS NOT NULL
           AND end_at <= now() + interval '7 days'
           AND end_at >= now()) AS ending_7d,
       (SELECT count(*)::int FROM giveaways
         WHERE discovered_at >= date_trunc('day', now() AT TIME ZONE 'UTC')
-          AND manual_status <> 'ignored') AS discovered_today,
+          AND manual_status IN ('none', 'interested')) AS discovered_today,
       (SELECT count(*)::int FROM giveaways
         WHERE remind_at IS NOT NULL
           AND remind_at <= now()
@@ -114,6 +140,8 @@ export async function getOverviewStats(): Promise<OverviewStats> {
   `;
   const r = rows[0] as Record<string, number>;
   return {
+    inbox: Number(r.inbox),
+    interested: Number(r.interested),
     active: Number(r.active),
     france_eligible: Number(r.france_eligible),
     free_entry: Number(r.free_entry),
@@ -133,7 +161,12 @@ export async function listRecentGiveaways(limit = 8): Promise<GiveawayRow[]> {
            (g.remind_at IS NOT NULL AND g.remind_at <= now()) AS reminder_due
     FROM giveaways g
     LEFT JOIN sources s ON s.id = g.source_id
-    WHERE g.manual_status <> 'ignored'
+    WHERE g.manual_status IN ('none', 'interested')
+      AND g.status = 'active'
+      AND g.wanted_prize IS TRUE
+      AND (g.eligible_france IS TRUE OR g.france_eligibility = 'eligible')
+      AND g.entry_acceptable IS TRUE
+      AND (g.entry_url_status IS NULL OR g.entry_url_status <> 'gone')
     ORDER BY g.discovered_at DESC
     LIMIT ${limit}
   `;
@@ -149,7 +182,7 @@ export async function listEndingSoon(limit = 8): Promise<GiveawayRow[]> {
     WHERE g.end_at IS NOT NULL
       AND g.end_at >= now()
       AND g.status IN ('active', 'candidate', 'uncertain')
-      AND g.manual_status <> 'ignored'
+      AND g.manual_status IN ('none', 'interested')
     ORDER BY g.end_at ASC
     LIMIT ${limit}
   `;
@@ -191,12 +224,18 @@ export async function listGiveaways(
       ? filters.prize_category
       : null;
   const sourceId = filters.source_id || null;
+  const view = filters.view ?? "inbox";
   const manualStatusRaw = filters.manual_status ?? "all";
   const manualStatus =
     manualStatusRaw && manualStatusRaw !== "all" ? manualStatusRaw : null;
-  // Default main view hides ignored; opening manual_status=ignored shows the ignore list.
-  const hideIgnored = manualStatus !== "ignored";
   const minValue = filters.min_value ?? null;
+
+  // View presets (Inbox is the default product surface).
+  const inboxView = view === "inbox";
+  const interestedView = view === "interested";
+  const enteredView = view === "entered";
+  const ignoredView = view === "ignored";
+  const historyView = view === "history";
 
   // Default main queue: France eligible only (unless inspecting unknown/ineligible).
   const franceEligibleOnly =
@@ -226,6 +265,27 @@ export async function listGiveaways(
         ${status} = 'all'
         OR (${status} = 'active' AND g.status = 'active')
         OR (${status} = 'expired' AND g.status = 'expired')
+      )
+      AND (
+        ${inboxView}::boolean IS NOT TRUE
+        OR g.manual_status IN ('none', 'interested')
+      )
+      AND (
+        ${interestedView}::boolean IS NOT TRUE
+        OR g.manual_status = 'interested'
+      )
+      AND (
+        ${enteredView}::boolean IS NOT TRUE
+        OR g.manual_status = 'entered'
+      )
+      AND (
+        ${ignoredView}::boolean IS NOT TRUE
+        OR g.manual_status = 'ignored'
+      )
+      AND (
+        ${historyView}::boolean IS NOT TRUE
+        OR g.manual_status IN ('entered', 'ignored', 'won', 'lost')
+        OR g.status = 'expired'
       )
       AND (
         ${franceEligibleOnly}::boolean IS NOT TRUE
@@ -273,7 +333,6 @@ export async function listGiveaways(
       AND (${entryMethod}::text IS NULL OR g.entry_method = ${entryMethod})
       AND (${sourceId}::uuid IS NULL OR g.source_id = ${sourceId}::uuid)
       AND (${manualStatus}::text IS NULL OR g.manual_status = ${manualStatus})
-      AND (${hideIgnored}::boolean IS FALSE OR g.manual_status <> 'ignored')
       AND (
         ${endingSoon}::boolean IS NULL
         OR (
@@ -341,6 +400,7 @@ export async function updateManualStatus(
   const rows = await sql`
     UPDATE giveaways
     SET manual_status = ${manualStatus},
+        manual_status_updated_at = now(),
         updated_at = now()
     WHERE id = ${id}::uuid
     RETURNING *,

@@ -71,19 +71,20 @@
       }
     },
     {
-      "name": "Gleam.io Directory",
+      "name": "Gleam Official Directory",
       "base_url": "https://gleam.io/giveaways",
       "source_type": "other",
       "enabled": true,
-      "crawl_interval_minutes": 360,
+      "crawl_interval_minutes": 180,
       "crawl_config": {
         "profile": "real",
         "region": "international",
         "target_regions": ["worldwide", "france", "eu"],
         "adapter": "gleam",
-        "max_pages": 8,
-        "max_depth": 1,
-        "notes": "Official directory often JS-rendered; campaigns parsed by existing Gleam parser when links present"
+        "max_pages": 30,
+        "max_depth": 2,
+        "gleam_directory_max_pages": 5,
+        "notes": "Official directory: listing → /giveaways/<id> → classic campaign parser"
       }
     },
     {
@@ -331,7 +332,7 @@
         "target_regions": ["worldwide", "france", "eu"],
         "adapter": "gleam",
         "enabled_reason": "superseded",
-        "notes": "Replaced by Gleam.io Directory (/giveaways)"
+        "notes": "Replaced by Gleam Official Directory (/giveaways)"
       }
     },
     {

@@ -12,10 +12,11 @@ from app.scraping.adapters.base import (
     PageEnrichment,
     absolute_url,
     anchor_pairs,
-    body_text,
+    build_candidate_filter_text,
     css_attr,
     dedupe_urls,
     first_css_text,
+    main_content_text,
 )
 from app.scraping.listing_filters import prefer_listing_card
 
@@ -53,11 +54,27 @@ class GleamGiveawaysAdapter:
             return self._listing(response, page_url)
 
         title = first_css_text(response, ("h1", ".gg-card-title", "title"))
-        body = body_text(response)
-        eligible = _labeled_value(body, "Eligible") or _find_eligible_line(body)
-        category = _labeled_value(body, "Category")
-        end_date = _labeled_value(body, "End date") or _labeled_value(body, "Ends")
-        prize = _labeled_value(body, "Grand Prize Value") or _find_prize(body)
+        main = main_content_text(
+            response,
+            selectors=(
+                "article",
+                "main",
+                ".gg-content",
+                ".giveaway-detail",
+                ".col-lg-8",
+                ".col-md-8",
+            ),
+        )
+        eligible = _labeled_value(main, "Eligible") or _find_eligible_line(main)
+        category = _labeled_value(main, "Category")
+        end_date = _labeled_value(main, "End date") or _labeled_value(main, "Ends")
+        prize = (
+            _labeled_value(main, "Grand Prize Value")
+            or _find_prize(main)
+            or title
+        )
+        # Prefer short description paragraphs near the title — not sidebar/nav.
+        description = _about_blurb(main) or _first_paragraph(main)
 
         entry_url = None
         for href, text in anchor_pairs(response):
@@ -81,7 +98,17 @@ class GleamGiveawaysAdapter:
                 entry_url = abs_url
                 break
 
-        meta: dict[str, Any] = {"category": category, "eligible_badge": eligible}
+        meta: dict[str, Any] = {
+            "category": category,
+            "eligible_badge": eligible,
+            "filter_text": build_candidate_filter_text(
+                title=title,
+                prize=prize,
+                category=category,
+                description=description,
+                restriction=eligible,
+            ),
+        }
         if entry_url:
             identity = gleam_identity_from_url(entry_url) or sweepwidget_identity_from_url(
                 entry_url
@@ -90,13 +117,20 @@ class GleamGiveawaysAdapter:
                 meta.update(identity)
 
         # Listing-level geo preference already applied when following; still expose.
+        excerpt = build_candidate_filter_text(
+            title=title,
+            prize=prize,
+            category=category,
+            description=description,
+            restriction=eligible,
+        )
         return PageEnrichment(
             title=title,
             prize=prize,
             end_date_text=end_date,
             entry_url=entry_url,
             restriction_text=eligible,
-            excerpt=body[:3000] if body else None,
+            excerpt=excerpt[:3000] if excerpt else None,
             skip_as_candidate=False,
             meta=meta,
         )
@@ -203,3 +237,26 @@ def _find_eligible_line(body: str) -> str | None:
 def _find_prize(body: str) -> str | None:
     m = re.search(r"\$[\d,]+(?:\s*[–-]\s*\$[\d,]+)?", body)
     return m.group(0) if m else None
+
+
+def _about_blurb(body: str) -> str | None:
+    m = re.search(
+        r"About This Giveaway\s*\n(.+?)(?:\n(?:Grand Prize|End date|Eligible|Category)\b|\Z)",
+        body,
+        re.IGNORECASE | re.DOTALL,
+    )
+    if m:
+        return re.sub(r"\s+", " ", m.group(1)).strip()[:800]
+    return None
+
+
+def _first_paragraph(body: str) -> str | None:
+    for line in (body or "").splitlines():
+        text = line.strip()
+        if len(text) >= 20 and not re.match(
+            r"^(Eligible|Category|End date|Ends|Grand Prize|Single Entry)\b",
+            text,
+            re.IGNORECASE,
+        ):
+            return text[:500]
+    return None

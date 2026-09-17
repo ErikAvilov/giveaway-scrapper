@@ -221,15 +221,10 @@ def crawl(
                 pages_fetched=result.pages_fetched,
                 candidates=result.candidates,
                 threshold=threshold,
+                gleam_directory=result.gleam_directory or None,
             )
-            click.echo(f"Worldwide/France: {summary.france_eligible}")
-            click.echo(f"France ineligible: {summary.france_ineligible}")
-            click.echo(f"France unknown: {summary.france_unknown}")
-            click.echo(f"Wanted prizes: {summary.wanted}")
-            click.echo(f"Unwanted: {summary.unwanted}")
-            click.echo(f"Dead: {summary.dead_urls}")
-            click.echo(f"Duplicates: {summary.duplicates}")
-            click.echo(f"Would keep: {summary.would_keep}")
+            for line in summary.format_lines()[1:]:
+                click.echo(line)
             click.echo(f"Would analyze: {would}")
         else:
             click.echo(
@@ -276,14 +271,22 @@ def crawl(
     "analyze_all",
     is_flag=True,
     default=False,
-    help="Process the entire pending queue until empty (mutually exclusive with --limit).",
+    help=(
+        "Drain the never-analyzed pending queue until empty "
+        "(analyzed_at IS NULL only — not a full DB reanalysis)."
+    ),
 )
 @click.option("--giveaway", "giveaway_id", default=None, help="Analyze a single giveaway UUID.")
 @click.option(
     "--reanalyze",
+    "--force",
+    "reanalyze",
     is_flag=True,
     default=False,
-    help="Include rows already analyzed (forces Gemini again unless other skips apply).",
+    help=(
+        "Force include already-analyzed rows (dev/debug only). "
+        "Normal 24/7 operation must never use this."
+    ),
 )
 @click.option(
     "--dry-run",
@@ -585,6 +588,283 @@ def reprioritize_entry_cmd(limit: int, force: bool, dry_run: bool) -> None:
         f"unchanged={summary.unchanged}\n"
         f"dry_run={dry_run}"
     )
+
+
+@main.command("reevaluate-entry-rules")
+@click.option(
+    "--limit",
+    default=500,
+    show_default=True,
+    type=int,
+    help="Max previously-rejected public-social rows to re-evaluate.",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Compute classifications without writing.",
+)
+def reevaluate_entry_rules_cmd(limit: int, dry_run: bool) -> None:
+    """
+    Re-evaluate giveaways rejected only under the old public-social rule.
+
+    Uses stored platform/action metadata. Preserves manual_status, analyzed_at,
+    wanted_prize, and France fields. Restores rejected→active/candidate when a
+    non-public entry path exists.
+    """
+    from app.extraction.entry_acceptability_backfill import reevaluate_entry_rules
+
+    settings = get_settings()
+    with connection(settings) as conn:
+        apply_migrations(conn)
+        summary = reevaluate_entry_rules(conn, limit=limit, dry_run=dry_run)
+        if not dry_run:
+            conn.commit()
+    click.echo(
+        "Reevaluate entry rules\n"
+        f"scanned={summary.scanned}\n"
+        f"updated={summary.updated}\n"
+        f"acceptable={summary.acceptable}\n"
+        f"rejected={summary.rejected}\n"
+        f"restored={summary.restored}\n"
+        f"unknown={summary.unknown}\n"
+        f"unchanged={summary.unchanged}\n"
+        f"dry_run={dry_run}"
+    )
+
+
+@main.command("probe")
+@click.argument("url", required=False, default=None)
+@click.option(
+    "--adapter",
+    default=None,
+    help="Adapter key (see --list-adapters). Omit for generic spider.",
+)
+@click.option("--max-pages", default=8, show_default=True, type=int)
+@click.option("--max-depth", default=1, show_default=True, type=int)
+@click.option(
+    "--threshold",
+    "candidate_threshold",
+    default=None,
+    type=float,
+    help="Candidate score threshold (default: settings).",
+)
+@click.option("--timeout", "request_timeout", default=None, type=float)
+@click.option("--retries", default=None, type=int)
+@click.option(
+    "--config",
+    "config_raw",
+    default=None,
+    help='Extra crawl_config JSON, e.g. \'{"adapter":"gleam","max_pages":5}\'',
+)
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    default=False,
+    help="Print machine-readable JSON instead of text diagnostics.",
+)
+@click.option(
+    "--list-adapters",
+    is_flag=True,
+    default=False,
+    help="List registered adapter keys and exit.",
+)
+def probe_cmd(
+    url: str | None,
+    adapter: str | None,
+    max_pages: int,
+    max_depth: int,
+    candidate_threshold: float | None,
+    request_timeout: float | None,
+    retries: int | None,
+    config_raw: str | None,
+    as_json: bool,
+    list_adapters: bool,
+) -> None:
+    """
+    Manually probe one URL (dry-run diagnostics, no DB writes).
+
+    Examples:
+      python -m app.cli probe example.com
+      python -m app.cli probe https://gleam.io/xyz --adapter gleam --max-pages 3
+      python -m app.cli probe concoursdunet.com --adapter concours_du_net --json
+    """
+    import json as json_lib
+
+    from app.scraping.adapters import registered_adapter_keys
+    from app.scraping.probe import probe_url
+
+    if list_adapters:
+        for key in registered_adapter_keys():
+            click.echo(key)
+        return
+
+    if not url:
+        raise click.UsageError("URL is required (or pass --list-adapters)")
+
+    config_json = None
+    if config_raw:
+        try:
+            parsed = json_lib.loads(config_raw)
+        except json_lib.JSONDecodeError as exc:
+            raise click.BadParameter(f"Invalid --config JSON: {exc}") from exc
+        if not isinstance(parsed, dict):
+            raise click.BadParameter("--config must be a JSON object")
+        config_json = parsed
+
+    settings = get_settings()
+    with connection(settings) as conn:
+        # Migrations optional for dry-run probe, but keep schema ready if .env points at Neon.
+        apply_migrations(conn)
+        try:
+            result = probe_url(
+                conn,
+                settings,
+                url,
+                adapter=adapter,
+                max_pages=max_pages,
+                max_depth=max_depth,
+                candidate_threshold=candidate_threshold,
+                request_timeout=request_timeout,
+                retries=retries,
+                config_json=config_json,
+            )
+        except ValueError as exc:
+            raise click.BadParameter(str(exc)) from exc
+
+    if as_json:
+        click.echo(json_lib.dumps(result.payload, ensure_ascii=False, indent=2))
+        return
+
+    click.echo("Probe (dry-run — nothing written)")
+    for line in result.summary_lines:
+        click.echo(line)
+    if result.candidate_lines:
+        click.echo("")
+        click.echo("Candidates")
+        for line in result.candidate_lines:
+            click.echo(line)
+    else:
+        click.echo("")
+        click.echo("No candidates found.")
+
+
+@main.command("enter-gleam")
+@click.option("--limit", default=10, show_default=True, type=int)
+@click.option(
+    "--status",
+    "manual_statuses",
+    multiple=True,
+    type=click.Choice(["interested", "none"], case_sensitive=False),
+    help="Manual statuses to queue (default: interested then none). Repeatable.",
+)
+@click.option(
+    "--france-only",
+    is_flag=True,
+    default=False,
+    help="Only queue FR-eligible Gleam campaigns.",
+)
+@click.option(
+    "--include-unacceptable",
+    is_flag=True,
+    default=False,
+    help="Include rows with entry_acceptable=false.",
+)
+@click.option(
+    "--id",
+    "giveaway_ids",
+    multiple=True,
+    help="Only these giveaway UUIDs (repeatable).",
+)
+@click.option("--dry-run", is_flag=True, default=False, help="List queue only; no Chrome.")
+@click.option(
+    "--no-headless",
+    is_flag=True,
+    default=False,
+    help="Show the Chrome window (useful for debugging / CAPTCHA).",
+)
+@click.option(
+    "--no-mark-entered",
+    is_flag=True,
+    default=False,
+    help="Do not set manual_status=entered after success.",
+)
+@click.option(
+    "--bot-root",
+    default=None,
+    help="Path to Gleam-giveaway-bot (default: ../Gleam-giveaway-bot).",
+)
+@click.option(
+    "--bot-python",
+    default=None,
+    help="Python used to run the bot (default: current interpreter). "
+    "Prefer a venv where Gleam-giveaway-bot deps are installed.",
+)
+def enter_gleam_cmd(
+    limit: int,
+    manual_statuses: tuple[str, ...],
+    france_only: bool,
+    include_unacceptable: bool,
+    giveaway_ids: tuple[str, ...],
+    dry_run: bool,
+    no_headless: bool,
+    no_mark_entered: bool,
+    bot_root: str | None,
+    bot_python: str | None,
+) -> None:
+    """
+    Enter queued Gleam campaigns via Gleam-giveaway-bot (desktop Selenium).
+
+    WARNING: Automating Gleam entries violates Gleam TOS — use a throwaway
+    browser profile. Never run this on the Raspberry Pi worker.
+
+    Setup once:
+      cd ../Gleam-giveaway-bot
+      python -m venv .venv && .venv/bin/pip install -r requirements.txt
+      cp config.json.example config.json
+      .venv/bin/python login.py
+    """
+    from uuid import UUID
+
+    from app.gleam_enter import enter_gleam_queue
+
+    only_ids: list[UUID] | None = None
+    if giveaway_ids:
+        only_ids = []
+        for raw in giveaway_ids:
+            try:
+                only_ids.append(UUID(raw))
+            except ValueError as exc:
+                raise click.BadParameter(f"Invalid --id UUID: {raw}") from exc
+
+    statuses = list(manual_statuses) if manual_statuses else ["interested", "none"]
+    settings = get_settings()
+    with connection(settings) as conn:
+        apply_migrations(conn)
+        result = enter_gleam_queue(
+            conn,
+            limit=limit,
+            manual_statuses=statuses,
+            require_france_eligible=france_only,
+            require_entry_acceptable=not include_unacceptable,
+            only_ids=only_ids,
+            dry_run=dry_run,
+            headless=not no_headless,
+            mark_entered=not no_mark_entered,
+            bot_root=bot_root,
+            python_executable=bot_python,
+        )
+        if not dry_run and result.marked_entered:
+            conn.commit()
+
+    click.echo("Gleam enter")
+    for line in result.format_lines():
+        click.echo(line)
+    if result.error:
+        raise SystemExit(1)
+    if result.failed and not dry_run:
+        raise SystemExit(2)
 
 
 @main.command("reset-crawl-schedule")

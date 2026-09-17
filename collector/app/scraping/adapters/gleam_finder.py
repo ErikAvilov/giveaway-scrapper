@@ -11,10 +11,11 @@ from app.scraping.adapters.base import (
     PageEnrichment,
     absolute_url,
     anchor_pairs,
-    body_text,
+    build_candidate_filter_text,
     css_attr,
     dedupe_urls,
     first_css_text,
+    main_content_text,
 )
 from app.scraping.listing_filters import is_worldwide_text
 
@@ -45,7 +46,18 @@ class GleamFinderAdapter:
             )
 
         title = first_css_text(response, ("h1", ".card-title", "title"))
-        body = body_text(response)
+        # Prefer primary column — GleamFinder puts categories in a left sidebar.
+        body = main_content_text(
+            response,
+            selectors=(
+                "article",
+                "main",
+                ".col-lg-8",
+                ".col-md-8",
+                ".col-8",
+                ".text-center.col-8",
+            ),
+        )
         organizer = None
         m = re.search(r"by\s+([^\n]+)", body)
         if m:
@@ -81,12 +93,25 @@ class GleamFinderAdapter:
                 entry_url = abs_url
                 break
 
-        meta: dict[str, Any] = {}
+        meta: dict[str, Any] = {
+            "filter_text": build_candidate_filter_text(
+                title=title,
+                prize=prize,
+                description=body[:1500] if body else None,
+                restriction=restriction,
+            ),
+        }
         if entry_url:
             identity = gleam_identity_from_url(entry_url)
             if identity:
                 meta.update(identity)
 
+        excerpt = build_candidate_filter_text(
+            title=title,
+            prize=prize,
+            description=body[:1500] if body else None,
+            restriction=restriction,
+        )
         return PageEnrichment(
             title=title,
             prize=prize,
@@ -94,7 +119,7 @@ class GleamFinderAdapter:
             entry_url=entry_url,
             organizer=organizer,
             restriction_text=restriction,
-            excerpt=body[:3000] if body else None,
+            excerpt=excerpt[:3000] if excerpt else None,
             skip_as_candidate=False,
             meta=meta,
         )

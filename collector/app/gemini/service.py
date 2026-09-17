@@ -34,7 +34,7 @@ from app.gemini.guards import (
     looks_undesirable_for_gemini,
 )
 from app.gemini.schema import GiveawayAnalysis, GiveawayBatchItemAnalysis
-from app.models.giveaway import Giveaway, GiveawayStatus
+from app.models.giveaway import Giveaway, GiveawayStatus, ManualStatus
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +46,7 @@ class SkipReason(StrEnum):
     UNDESIRABLE = "undesirable"
     FRANCE_INELIGIBLE = "france_ineligible"
     PUBLIC_SOCIAL = "public_social"
+    TERMINAL_MANUAL = "terminal_manual"
     MISSING_CONTENT = "missing_content"
 
 
@@ -153,6 +154,14 @@ def should_skip_analysis(
         return SkipReason.MISSING_CONTENT
     if giveaway.analyzed_at is not None and not reanalyze:
         return SkipReason.ALREADY_ANALYZED
+    # Terminal user decisions are sacred — never auto-send to AI again.
+    if giveaway.manual_status in {
+        ManualStatus.ENTERED,
+        ManualStatus.IGNORED,
+        ManualStatus.WON,
+        ManualStatus.LOST,
+    }:
+        return SkipReason.TERMINAL_MANUAL
     if heuristic_below_threshold(giveaway, threshold=settings.crawl_candidate_threshold):
         return SkipReason.HEURISTIC_REJECTED
     if looks_clearly_expired(giveaway):
@@ -170,16 +179,27 @@ def should_skip_analysis(
         return SkipReason.FRANCE_INELIGIBLE
 
     requirements: list[str] = []
+    platform_actions: list[dict[str, Any]] = []
+    actions_required: int | None = None
     if isinstance(giveaway.analysis_json, dict):
         raw_req = giveaway.analysis_json.get("requirements")
         if isinstance(raw_req, list):
             requirements = [str(r) for r in raw_req if r]
+        from app.extraction.entry_acceptability_backfill import (
+            _actions_required_from_analysis,
+            _platform_actions_from_analysis,
+        )
+
+        platform_actions = _platform_actions_from_analysis(giveaway.analysis_json)
+        actions_required = _actions_required_from_analysis(giveaway.analysis_json)
     local_entry = assess_entry_acceptability(
         title=giveaway.title,
         prize=giveaway.prize,
         body=giveaway.raw_excerpt,
         entry_method=giveaway.entry_method,
         requirements=requirements,
+        platform_actions=platform_actions or None,
+        actions_required=actions_required,
     )
     if local_entry.entry_acceptable is False:
         return SkipReason.PUBLIC_SOCIAL
@@ -204,6 +224,16 @@ def apply_analysis(
     eligible_france = sync_eligible_france_column(france)
 
     requirements = list(analysis.requirements or [])
+    platform_actions: list[dict[str, Any]] = []
+    actions_required: int | None = None
+    if isinstance(giveaway.analysis_json, dict):
+        from app.extraction.entry_acceptability_backfill import (
+            _actions_required_from_analysis,
+            _platform_actions_from_analysis,
+        )
+
+        platform_actions = _platform_actions_from_analysis(giveaway.analysis_json)
+        actions_required = _actions_required_from_analysis(giveaway.analysis_json)
     local_entry = assess_entry_acceptability(
         title=analysis.title or giveaway.title,
         prize=analysis.prize or giveaway.prize,
@@ -214,6 +244,8 @@ def apply_analysis(
             else giveaway.entry_method
         ),
         requirements=requirements,
+        platform_actions=platform_actions or None,
+        actions_required=actions_required,
     )
     entry = merge_entry_acceptability(
         local_entry,
@@ -360,16 +392,27 @@ def mark_public_social_without_gemini(
 ) -> Giveaway:
     assert giveaway.id is not None
     requirements: list[str] = []
+    platform_actions: list[dict[str, Any]] = []
+    actions_required: int | None = None
     if isinstance(giveaway.analysis_json, dict):
         raw_req = giveaway.analysis_json.get("requirements")
         if isinstance(raw_req, list):
             requirements = [str(r) for r in raw_req if r]
+        from app.extraction.entry_acceptability_backfill import (
+            _actions_required_from_analysis,
+            _platform_actions_from_analysis,
+        )
+
+        platform_actions = _platform_actions_from_analysis(giveaway.analysis_json)
+        actions_required = _actions_required_from_analysis(giveaway.analysis_json)
     local = assess_entry_acceptability(
         title=giveaway.title,
         prize=giveaway.prize,
         body=giveaway.raw_excerpt,
         entry_method=giveaway.entry_method,
         requirements=requirements,
+        platform_actions=platform_actions or None,
+        actions_required=actions_required,
     )
     payload = {
         "is_giveaway": True,

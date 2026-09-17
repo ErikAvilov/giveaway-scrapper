@@ -122,6 +122,81 @@ def body_text(response: Any, *, max_chars: int = 8000) -> str:
     return str(node)[:max_chars]
 
 
+def main_content_text(
+    response: Any,
+    *,
+    selectors: tuple[str, ...] = (
+        "article",
+        "main",
+        "[role='main']",
+        ".col-lg-8",
+        ".col-md-8",
+        ".gg-content",
+        ".giveaway-content",
+        ".entry-content",
+        ".post-content",
+        ".content-area",
+        "#content",
+        ".card-body",
+    ),
+    max_chars: int = 5000,
+) -> str:
+    """
+    Extract giveaway-specific page text, preferring main column over nav/sidebar.
+
+    Negative filters (crypto/travel/…) must use this — not full-page body_text —
+    so site-wide category links do not poison classification.
+    """
+    for sel in selectors:
+        nodes = response.css(sel) or []
+        for node in nodes:
+            # Skip obvious chrome when selector is broad.
+            classes = ""
+            if hasattr(node, "attrib"):
+                classes = f"{node.attrib.get('class') or ''} {node.attrib.get('id') or ''}".lower()
+            if any(
+                bad in classes
+                for bad in ("nav", "sidebar", "footer", "menu", "widget", "aside")
+            ):
+                continue
+            if hasattr(node, "get_all_text"):
+                text = node.get_all_text(separator="\n", strip=True)
+            else:
+                text = str(node).strip()
+            if text and len(text) > 40:
+                return text[:max_chars]
+    # Last resort: strip common chrome tags via CSS exclusion if possible.
+    for chrome in ("nav", "aside", "footer", "header", ".navbar", ".sidebar"):
+        try:
+            for node in response.css(chrome) or []:
+                if hasattr(node, "drop") and callable(node.drop):
+                    node.drop()
+        except (TypeError, ValueError, AttributeError):
+            pass
+    return body_text(response, max_chars=max_chars)
+
+
+def build_candidate_filter_text(
+    *,
+    title: str | None = None,
+    prize: str | None = None,
+    category: str | None = None,
+    description: str | None = None,
+    rules: str | None = None,
+    restriction: str | None = None,
+) -> str:
+    """Concatenate only giveaway-specific fields for undesirability filters."""
+    parts = [
+        title,
+        prize,
+        f"Category: {category}" if category else None,
+        f"Eligible: {restriction}" if restriction else None,
+        description,
+        rules,
+    ]
+    return "\n".join(p.strip() for p in parts if p and str(p).strip())
+
+
 def dl_facts(response: Any) -> dict[str, str]:
     """Map <dt> → <dd> text for Giveario-style fact lists."""
     facts: dict[str, str] = {}

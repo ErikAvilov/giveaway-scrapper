@@ -84,6 +84,7 @@ export interface GiveawayRow {
   manual_status: ManualStatus;
   remind_at: Date | null;
   reminder_hours: number | null;
+  manual_status_updated_at: Date | null;
   /** Computed at query time: remind_at is set and <= now(). */
   reminder_due: boolean;
   created_at: Date;
@@ -121,6 +122,8 @@ export interface CrawlRunRow {
 }
 
 export interface OverviewStats {
+  inbox: number;
+  interested: number;
   active: number;
   france_eligible: number;
   free_entry: number;
@@ -133,6 +136,13 @@ export interface OverviewStats {
   ignored: number;
 }
 
+export type InboxView =
+  | "inbox"
+  | "interested"
+  | "entered"
+  | "ignored"
+  | "history";
+
 export type GiveawaySort =
   | "newest"
   | "ending_soon"
@@ -144,6 +154,7 @@ export type GiveawaySort =
 export interface GiveawayFilters {
   q?: string;
   status?: "active" | "expired" | "all";
+  view?: InboxView;
   france?: boolean;
   free?: boolean;
   wanted_only?: boolean;

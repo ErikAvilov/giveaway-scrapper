@@ -18,10 +18,26 @@ from app.extraction.entry_assessment import EntryFriction, GeoScope, infer_eligi
 
 PLATFORM = "gleam"
 
-# https://gleam.io/<key> or https://gleam.io/<key>/<slug>
+# Classic campaign: https://gleam.io/<key> or https://gleam.io/<key>/<slug>
 _GLEAM_PATH = re.compile(
     r"^/(?P<key>[A-Za-z0-9]{4,12})(?:/(?P<slug>[A-Za-z0-9\-._]+))?/?$",
 )
+
+# Directory detail: https://gleam.io/giveaways/<id>  (NOT the listing itself)
+_GLEAM_DIRECTORY_DETAIL = re.compile(
+    r"^/giveaways/(?P<id>[A-Za-z0-9]{4,12})/?$",
+)
+
+# data-widget="https://gleam.io/<key>/x" on directory detail pages
+_CAMPAIGN_WIDGET = re.compile(
+    r"""data-widget=["'](https?://(?:www\.)?gleam\.io/[A-Za-z0-9]{4,12}/[^"']+)["']""",
+    re.IGNORECASE,
+)
+
+# Directory sort query: s=n Newest, s=e Ending Soon, s=s Good Odds, s=f Ended (skip).
+# Default (no s) = Most Popular.
+_GLEAM_USEFUL_SORTS = frozenset({"", "n", "e", "s"})
+_GLEAM_ENDED_SORT = "f"
 
 _NON_CAMPAIGN_KEYS = frozenset(
     {
@@ -47,6 +63,17 @@ _NON_CAMPAIGN_KEYS = frozenset(
         "shopify-install",
         "cms_pages",
         "signed-in",
+        "guides",
+        "customers",
+        "success",
+        "security",
+        "privacy",
+        "terms",
+        "faq",
+        "atom",
+        "webpack",
+        "images",
+        "by",
     }
 )
 
@@ -207,9 +234,34 @@ def is_gleam_host(url: str) -> bool:
     return host == "gleam.io" or host.endswith(".gleam.io")
 
 
-def parse_gleam_campaign_url(url: str) -> tuple[str | None, str | None]:
-    """Return (campaign_key, slug) when URL looks like a Gleam campaign page."""
+def is_gleam_directory_listing(url: str) -> bool:
+    """True for https://gleam.io/giveaways (with optional sort/page query)."""
     if not is_gleam_host(url):
+        return False
+    path = (urlparse(url).path or "/").rstrip("/") or "/"
+    return path == "/giveaways"
+
+
+def parse_gleam_directory_detail_url(url: str) -> str | None:
+    """Return directory giveaway id for /giveaways/<id>, else None."""
+    if not is_gleam_host(url):
+        return None
+    path = urlparse(url).path or "/"
+    match = _GLEAM_DIRECTORY_DETAIL.match(path)
+    if not match:
+        return None
+    detail_id = match.group("id")
+    if detail_id.lower() in _NON_CAMPAIGN_KEYS:
+        return None
+    return detail_id
+
+
+def parse_gleam_campaign_url(url: str) -> tuple[str | None, str | None]:
+    """Return (campaign_key, slug) for classic /<key>/<slug> pages only."""
+    if not is_gleam_host(url):
+        return None, None
+    # Directory paths are handled separately — never treat as classic.
+    if is_gleam_directory_listing(url) or parse_gleam_directory_detail_url(url):
         return None, None
     path = urlparse(url).path or "/"
     match = _GLEAM_PATH.match(path)
@@ -222,23 +274,83 @@ def parse_gleam_campaign_url(url: str) -> tuple[str | None, str | None]:
     return key, slug
 
 
+def gleam_directory_detail_url(directory_id: str) -> str:
+    return f"https://gleam.io/giveaways/{directory_id}"
+
+
 def gleam_canonical_url(campaign_id: str, slug: str | None = None) -> str:
     if slug:
         return f"https://gleam.io/{campaign_id}/{slug}"
     return f"https://gleam.io/{campaign_id}"
 
 
+def canonicalize_gleam_directory_list_url(
+    url: str,
+    *,
+    allow_ended: bool = False,
+) -> str | None:
+    """
+    Normalize directory listing URLs to a small parameter space.
+
+    Keeps only sort `s` in {n,e,s} (or default popular) and page `p`.
+    Returns None for Ended (s=f) unless allow_ended, or non-listing URLs.
+    """
+    if not is_gleam_directory_listing(url):
+        return None
+    parsed = urlparse(url)
+    from urllib.parse import parse_qs, urlencode
+
+    qs = parse_qs(parsed.query)
+    sort = (qs.get("s") or [""])[0].strip().lower()
+    if sort == _GLEAM_ENDED_SORT and not allow_ended:
+        return None
+    if sort not in _GLEAM_USEFUL_SORTS:
+        return None
+    page_raw = (qs.get("p") or ["1"])[0]
+    try:
+        page = max(1, int(page_raw))
+    except (TypeError, ValueError):
+        page = 1
+    params: list[tuple[str, str]] = []
+    if sort:
+        params.append(("s", sort))
+    if page > 1:
+        params.append(("p", str(page)))
+    query = urlencode(params)
+    base = "https://gleam.io/giveaways"
+    return f"{base}?{query}" if query else base
+
+
+def extract_campaign_widget_url(html: str) -> str | None:
+    """Classic campaign URL embedded on directory detail via data-widget."""
+    match = _CAMPAIGN_WIDGET.search(html or "")
+    if not match:
+        return None
+    return match.group(1).strip()
+
+
 def gleam_identity_from_url(url: str) -> dict[str, str] | None:
     key, slug = parse_gleam_campaign_url(url)
-    if not key:
-        return None
-    return {
-        "platform": PLATFORM,
-        "platform_campaign_id": key,
-        "campaign_slug": slug or "",
-        "entry_url": gleam_canonical_url(key, slug),
-        "canonical_hint": gleam_canonical_url(key, slug),
-    }
+    if key:
+        return {
+            "platform": PLATFORM,
+            "platform_campaign_id": key,
+            "campaign_slug": slug or "",
+            "entry_url": gleam_canonical_url(key, slug),
+            "canonical_hint": gleam_canonical_url(key, slug),
+        }
+    directory_id = parse_gleam_directory_detail_url(url)
+    if directory_id:
+        # Directory id is the same stable campaign key on Gleam.
+        return {
+            "platform": PLATFORM,
+            "platform_campaign_id": directory_id,
+            "campaign_slug": "",
+            "directory_id": directory_id,
+            "entry_url": gleam_directory_detail_url(directory_id),
+            "canonical_hint": gleam_canonical_url(directory_id, "x"),
+        }
+    return None
 
 
 def _category_for(entry_type: str) -> str:
@@ -300,8 +412,22 @@ def _extract_geo_from_terms(terms_text: str | None) -> tuple[str | None, GeoScop
 
 def extract_init_campaign_payload(html: str) -> dict[str, Any] | None:
     """Extract the JSON object passed to Angular initCampaign(...)."""
-    if "initCampaign(" not in html and "initCampaign" not in html:
-        return None
+    result = extract_init_campaign_payload_result(html)
+    return result.payload
+
+
+@dataclass(slots=True, frozen=True)
+class InitCampaignExtractResult:
+    payload: dict[str, Any] | None
+    failure_reason: str | None = None
+
+
+def extract_init_campaign_payload_result(html: str) -> InitCampaignExtractResult:
+    """Extract initCampaign JSON with a short failure reason when missing."""
+    if not html or not str(html).strip():
+        return InitCampaignExtractResult(None, "empty body")
+    if "initCampaign" not in html:
+        return InitCampaignExtractResult(None, "no initCampaign payload")
     patterns = (
         r'ng-init="(initCampaign\(.+\))"',
         r"ng-init='(initCampaign\(.+\))'",
@@ -313,11 +439,11 @@ def extract_init_campaign_payload(html: str) -> dict[str, Any] | None:
         if match:
             break
     if not match:
-        return None
+        return InitCampaignExtractResult(None, "no initCampaign payload")
     attr = unescape(match.group(1))
     start = attr.find("{")
     if start < 0:
-        return None
+        return InitCampaignExtractResult(None, "invalid JSON/payload")
     depth = 0
     in_str = False
     esc = False
@@ -343,9 +469,43 @@ def extract_init_campaign_payload(html: str) -> dict[str, Any] | None:
                 try:
                     payload = json.loads(attr[start : i + 1])
                 except json.JSONDecodeError:
-                    return None
-                return payload if isinstance(payload, dict) else None
-    return None
+                    return InitCampaignExtractResult(None, "invalid JSON/payload")
+                if isinstance(payload, dict):
+                    return InitCampaignExtractResult(payload, None)
+                return InitCampaignExtractResult(None, "invalid JSON/payload")
+    return InitCampaignExtractResult(None, "invalid JSON/payload")
+
+
+def diagnose_gleam_parse_failure(
+    html: str | None,
+    *,
+    page_url: str,
+    http_status: int | None = None,
+) -> str:
+    """Short probe-friendly reason when a fetched Gleam campaign page did not parse."""
+    if http_status is not None and not (200 <= int(http_status) < 300):
+        return f"HTTP status {http_status}"
+    if parse_gleam_directory_detail_url(page_url):
+        # Directory shells are not campaign parse targets (classic follow is separate).
+        return "unsupported directory detail shape"
+    key, _slug = parse_gleam_campaign_url(page_url)
+    if key is None and not is_gleam_directory_listing(page_url):
+        return "missing campaign identity"
+    body = html or ""
+    if re.search(
+        r"""http-equiv=["']?refresh|window\.location\s*=|meta[^>]+refresh""",
+        body,
+        re.IGNORECASE,
+    ):
+        return "redirect"
+    result = extract_init_campaign_payload_result(body)
+    if result.failure_reason == "empty body":
+        return "other"
+    if result.failure_reason:
+        return result.failure_reason
+    if result.payload is not None and not result.payload.get("campaign"):
+        return "invalid JSON/payload"
+    return "other"
 
 
 def _action_from_em(em: dict[str, Any]) -> GleamEntryAction:
@@ -383,14 +543,16 @@ def assess_gleam_friction(
     if has_paid:
         return EntryFriction.HARD
 
-    referral = [a for a in mandatory + optional if a.category == "referral"]
-    upload = [a for a in mandatory + optional if a.category == "upload"]
-    creative = [
+    referral_required = [a for a in mandatory if a.category == "referral"]
+    upload_required = [a for a in mandatory if a.category == "upload"]
+    creative_required = [
         a
-        for a in mandatory + optional
+        for a in mandatory
         if any(x in a.entry_type for x in ("blog", "essay", "creative", "video_submit", "photo_submit"))
     ]
-    if referral or upload or creative:
+    # Optional referral / upload / creative bonus methods must NOT force HARD —
+    # entry-path evaluation decides acceptability.
+    if referral_required or upload_required or creative_required:
         return EntryFriction.HARD
 
     mand_social = [a for a in mandatory if a.category == "social"]
@@ -398,6 +560,11 @@ def assess_gleam_friction(
     mand_social_n = len(mand_social)
     # Prefer explicit campaign actions_required when present.
     required_n = actions_required if actions_required is not None else mand_count
+
+    optional_referral = [a for a in optional if a.category == "referral"]
+    if optional_referral and required_n <= 2 and mand_social_n == 0:
+        # Bonus referrals alone: keep easy/medium based on other signals below.
+        pass
 
     if required_n >= 6 or mand_social_n >= 4:
         return EntryFriction.HARD

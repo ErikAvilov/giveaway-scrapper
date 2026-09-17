@@ -146,7 +146,7 @@ def test_analyze_limit_20_still_stops_after_20(settings, migrated_db) -> None:
             )
             assert batch.analyzed == 20
             assert mock.analyze_giveaway_batch.call_count == 2
-            assert GiveawayRepository(conn).count_pending_analysis() == 30
+            assert GiveawayRepository(conn).count_pending_analysis(only_ids=ids) == 30
         finally:
             _cleanup(conn, token, 50)
 
